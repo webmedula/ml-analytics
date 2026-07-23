@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Análise de Mercado · tiny-analytics</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --panel-2: #23262e; --border: #2e323c;
+    --text: #e8e9ec; --text-dim: #9a9fab; --accent: #3b82f6; --accent-2: #2563eb;
+    --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; gap: 10px; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  main { padding: 24px; max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+  .panel h2 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-dim); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button { background: var(--accent); color: white; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  button:hover { background: var(--accent-2); }
+  button.secondary { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--text-dim); font-size: 12px; }
+  a { color: var(--accent); text-decoration: none; }
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; }
+  .card { flex: 1; min-width: 150px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .card .t { font-weight: 600; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+  .card .v { font-size: 22px; font-weight: 700; }
+  .card .v.warn { color: var(--yellow); } .card .v.bad { color: var(--red); } .card .v.ok { color: var(--green); }
+  .empty { color: var(--text-dim); font-size: 13px; padding: 16px 0; text-align: center; }
+  .tag { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .tag.perdendo { background: rgba(239,68,68,.15); color: var(--red); }
+  .tag.ganhando { background: rgba(34,197,94,.15); color: var(--green); }
+  .tag.empatado { background: rgba(234,179,8,.15); color: var(--yellow); }
+  .tag.indefinido { background: var(--panel-2); color: var(--text-dim); }
+  .title-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .dot.on { background: var(--green); } .dot.off { background: var(--red); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Análise de Mercado <span class="muted" id="appVersion"></span></h1>
+  <div class="row">
+    <span class="muted" id="mlStatus"></span>
+    <span class="muted" id="info"></span>
+    <select id="filtro" class="secondary" onchange="render()" style="padding:8px;border-radius:6px;background:var(--panel-2);color:var(--text);border:1px solid var(--border)">
+      <option value="perdendo">Só perdendo</option>
+      <option value="todos">Todos</option>
+    </select>
+    <button class="secondary" onclick="exportCsv()">Exportar CSV</button>
+    <button class="secondary" onclick="load(true)">Atualizar (revarrer)</button>
+  </div>
+</header>
+
+<main>
+  <section class="panel" id="connectPanel" style="display:none">
+    <h2>Conectar ao Mercado Livre</h2>
+    <p class="muted">Este serviço precisa de autorização no Mercado Livre (aplicativo próprio) para analisar seus anúncios.</p>
+    <a href="/oauth/ml/login"><button>Conectar ao Mercado Livre</button></a>
+  </section>
+
+  <section class="panel" id="resumoPanel">
+    <h2>Resumo</h2>
+    <div class="cards" id="cards"></div>
+    <div class="muted" id="obs" style="margin-top:12px"></div>
+  </section>
+
+  <section class="panel" id="tabelaPanel">
+    <h2>Anúncios de catálogo</h2>
+    <table>
+      <thead><tr>
+        <th>Situação</th><th>Anúncio</th>
+        <th class="num">Preço atual</th><th class="num">Preço p/ ganhar</th>
+        <th class="num">Diferença</th><th class="num">Vendidos</th><th class="num">Estoque</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div id="vazio" class="empty" style="display:none"></div>
+  </section>
+</main>
+
+<script>
+let data = null;
+
+function apiKey() { return localStorage.getItem('tiny_api_key') || ''; }
+async function api(path) {
+  const headers = {};
+  if (apiKey()) headers['x-api-key'] = apiKey();
+  const res = await fetch(path, { headers });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.mensagem || ('HTTP ' + res.status));
+  return d;
+}
+function fmtMoney(n) { return n == null ? '—' : 'R$ ' + Number(n).toFixed(2).replace('.', ','); }
+function fmtHora(iso) { try { return new Date(iso).toLocaleString('pt-BR'); } catch (e) { return iso; } }
+function card(t, v, cls) { return '<div class="card"><div class="t">' + t + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>'; }
+
+function showConnect(connected) {
+  document.getElementById('connectPanel').style.display = connected ? 'none' : '';
+  document.getElementById('resumoPanel').style.display = connected ? '' : 'none';
+  document.getElementById('tabelaPanel').style.display = connected ? '' : 'none';
+  document.getElementById('mlStatus').innerHTML = '<span class="dot ' + (connected ? 'on' : 'off') + '"></span>ML ' + (connected ? 'conectado' : 'desconectado');
+}
+
+function render() {
+  if (!data) return;
+  const filtro = document.getElementById('filtro').value;
+  const itens = filtro === 'perdendo' ? data.items.filter(i => i.situacao === 'perdendo') : data.items;
+
+  document.getElementById('cards').innerHTML =
+    card('Anúncios de catálogo', data.totalCatalogo) +
+    card('Perdendo o Buy Box', data.perdendo, data.perdendo > 0 ? 'bad' : 'ok') +
+    card('Ganhando', data.items.filter(i => i.situacao === 'ganhando').length, 'ok') +
+    card('Empatado', data.items.filter(i => i.situacao === 'empatado').length, 'warn');
+
+  const tb = document.getElementById('tbody');
+  tb.innerHTML = itens.map(i => {
+    const diff = i.gap != null ? fmtMoney(i.gap) + (i.gapPercent != null ? ' <span class="muted">(' + i.gapPercent.toFixed(1) + '%)</span>' : '') : '—';
+    const link = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + (i.title || i.itemId) + '</a>' : (i.title || i.itemId);
+    return '<tr>' +
+      '<td><span class="tag ' + i.situacao + '">' + i.situacao + '</span></td>' +
+      '<td class="title-cell">' + link + '<div class="muted">' + i.itemId + '</div></td>' +
+      '<td class="num">' + fmtMoney(i.precoAtual) + '</td>' +
+      '<td class="num">' + fmtMoney(i.precoParaGanhar) + '</td>' +
+      '<td class="num">' + diff + '</td>' +
+      '<td class="num">' + (i.vendidos ?? '—') + '</td>' +
+      '<td class="num">' + (i.disponivel ?? '—') + '</td>' +
+      '</tr>';
+  }).join('');
+
+  const vazio = document.getElementById('vazio');
+  if (itens.length === 0) {
+    vazio.style.display = '';
+    vazio.textContent = filtro === 'perdendo' ? 'Nenhum anúncio perdendo o Buy Box 🎉' : 'Nenhum anúncio de catálogo encontrado.';
+  } else {
+    vazio.style.display = 'none';
+  }
+
+  document.getElementById('obs').innerHTML =
+    (data.truncado ? '⚠️ A varredura atingiu o teto de anúncios — pode haver mais não analisados (ajuste CATALOG_SCAN_MAX_ITEMS). ' : '') +
+    'Perdendo = outro vendedor está ganhando a página do produto; "Preço p/ ganhar" é o valor sugerido pelo Mercado Livre para reassumir o Buy Box.';
+}
+
+async function load(forcar) {
+  try {
+    const h = await fetch('/health').then(r => r.json());
+    document.getElementById('appVersion').textContent = h.version || '';
+    showConnect(!!h.mlAuthenticated);
+    if (!h.mlAuthenticated) { document.getElementById('info').textContent = ''; return; }
+  } catch (e) {}
+
+  document.getElementById('info').textContent = forcar ? 'revarrendo (pode levar um tempo)...' : 'carregando...';
+  try {
+    data = await api('/api/catalog/competition' + (forcar ? '?refresh=1' : ''));
+    document.getElementById('info').textContent = 'atualizado em ' + fmtHora(data.updatedAt);
+    render();
+  } catch (e) {
+    document.getElementById('info').textContent = 'Erro: ' + e.message;
+  }
+}
+
+function exportCsv() {
+  if (!data) return;
+  const linhas = [['item_id', 'titulo', 'situacao', 'preco_atual', 'preco_para_ganhar', 'diferenca', 'diferenca_pct', 'vendidos', 'estoque', 'permalink']];
+  for (const i of data.items) linhas.push([
+    i.itemId, i.title || '', i.situacao,
+    i.precoAtual != null ? String(i.precoAtual).replace('.', ',') : '',
+    i.precoParaGanhar != null ? String(i.precoParaGanhar).replace('.', ',') : '',
+    i.gap != null ? String(i.gap).replace('.', ',') : '',
+    i.gapPercent != null ? String(i.gapPercent).replace('.', ',') : '',
+    i.vendidos ?? '', i.disponivel ?? '', i.permalink || '',
+  ]);
+  const csv = linhas.map(l => l.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(';')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'catalogo-buybox-' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+load();
+</script>
+
+</body>
+</html>
