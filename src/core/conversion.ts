@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from '../config';
 import { logger } from '../logger';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
-import { getItemsAttributes, getSellerItemIds, getSoldUnitsByItem, getVisitsForItems } from '../ml/mlClient';
+import { getItemsAttributes, getSellerItemIds, getSoldUnitsByItem, getVisitsWindows } from '../ml/mlClient';
 
 /**
  * Conversao por anuncio = unidades vendidas / visitas, em duas janelas (30 e 7 dias).
@@ -100,15 +100,15 @@ async function doScan(): Promise<ConversionResult> {
   logger.info(`[CONVERSAO] ${ids.length} anuncios ativos (teto ${max}${truncado ? ', truncado' : ''}).`);
 
   const attrs = await getItemsAttributes(ids);
-  const [visitas30, visitas7, vendasMap] = await Promise.all([
-    getVisitsForItems(ids, dateStr(30), dateStr(0)),
-    getVisitsForItems(ids, dateStr(7), dateStr(0)),
+  const [visitasMap, vendasMap] = await Promise.all([
+    getVisitsWindows(ids),
     getSoldUnitsByItem(30),
   ]);
 
   const items: ConversionView[] = attrs.map((a) => {
-    const v30 = visitas30.get(a.id) ?? 0;
-    const v7 = visitas7.get(a.id) ?? 0;
+    const vis = visitasMap.get(a.id) || { v30: 0, v7: 0 };
+    const v30 = vis.v30;
+    const v7 = vis.v7;
     const sold = vendasMap.get(a.id) || { total: 0, d7: 0 };
     return {
       itemId: a.id,

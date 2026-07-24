@@ -177,20 +177,30 @@ export async function getCatalogProduct(productId: string): Promise<any> {
   return mlRequest<any>(`/products/${productId}`);
 }
 
-/** Total de visitas por anuncio entre duas datas (YYYY-MM-DD). Usa o endpoint em lote
- * /items/visits?ids= (ate 20 ids por chamada). Retorna um mapa itemId -> total de visitas. */
-export async function getVisitsForItems(ids: string[], dateFrom: string, dateTo: string): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  for (let i = 0; i < ids.length; i += 20) {
-    const chunk = ids.slice(i, i + 20);
+/**
+ * Visitas por anuncio nas janelas de 30 e 7 dias, via /items/{id}/visits/time_window (1 chamada
+ * por anuncio, mas confiavel). A chamada com last=30&unit=day ja traz o detalhe diario dos 30
+ * dias: somamos tudo pra 30d e so os ultimos 7 dias pra 7d. Retorna itemId -> { v30, v7 }.
+ */
+export async function getVisitsWindows(ids: string[]): Promise<Map<string, { v30: number; v7: number }>> {
+  const out = new Map<string, { v30: number; v7: number }>();
+  const corte7 = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  for (const id of ids) {
     try {
-      const data = await mlRequest<any[]>(`/items/visits?ids=${chunk.join(',')}&date_from=${dateFrom}&date_to=${dateTo}`);
-      for (const entry of data || []) {
-        if (entry?.item_id) out.set(entry.item_id, Number(entry.total_visits ?? 0));
+      const data = await mlRequest<any>(`/items/${id}/visits/time_window?last=30&unit=day`);
+      const results: any[] = Array.isArray(data?.results) ? data.results : [];
+      let v30 = Number(data?.total_visits ?? 0);
+      if (!v30 && results.length) v30 = results.reduce((s, r) => s + Number(r.total ?? 0), 0);
+      let v7 = 0;
+      for (const r of results) {
+        const t = new Date(r.date).getTime();
+        if (Number.isFinite(t) && t >= corte7) v7 += Number(r.total ?? 0);
       }
+      out.set(id, { v30, v7 });
     } catch (err: any) {
-      logger.warn(`[VISITAS] Falha no lote de visitas:`, err?.message || err);
+      logger.warn(`[VISITAS] Falha nas visitas do item ${id}:`, err?.message || err);
     }
+    await sleep(60);
   }
   return out;
 }
@@ -320,5 +330,11 @@ export async function debugItemRaw(itemId: string): Promise<any> {
     ? await mlRequest<any>(`/reviews/item/${productId}`).catch((e) => ({ erro: String(e?.message || e) }))
     : null;
 
-  return { itemId, catalogProductId: productId ?? null, attr: attr ?? null, priceToWin, product, winnerItemId: winnerItemId ?? null, winnerViaMultiget, winnerViaSingle, reviewsViaItem, reviewsViaSearch, reviewsViaProduct };
+  // Sondagem de VISITAS: duas formas, pra confirmar qual retorna dados na sua conta.
+  const hoje = new Date().toISOString().slice(0, 10);
+  const trintaDias = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const visitsTimeWindow = await mlRequest<any>(`/items/${itemId}/visits/time_window?last=30&unit=day`).catch((e) => ({ erro: String(e?.message || e) }));
+  const visitsMulti = await mlRequest<any>(`/items/visits?ids=${itemId}&date_from=${trintaDias}&date_to=${hoje}`).catch((e) => ({ erro: String(e?.message || e) }));
+
+  return { itemId, catalogProductId: productId ?? null, attr: attr ?? null, priceToWin, product, winnerItemId: winnerItemId ?? null, winnerViaMultiget, winnerViaSingle, reviewsViaItem, reviewsViaSearch, reviewsViaProduct, visitsTimeWindow, visitsMulti };
 }
