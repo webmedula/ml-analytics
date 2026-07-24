@@ -56,10 +56,22 @@
     </select>
     <button class="secondary" onclick="exportCsv()">Exportar CSV</button>
     <button class="secondary" onclick="load(true)">Atualizar (revarrer)</button>
+    <button class="secondary" onclick="toggleKeyPanel()">🔑 Chave</button>
   </div>
 </header>
 
 <main>
+  <section class="panel" id="keyPanel" style="display:none">
+    <h2>Chave de acesso</h2>
+    <p class="muted">Este serviço está protegido por uma chave (<code>SERVICE_API_KEY</code>). Cole a chave abaixo para liberar as análises. Ela fica guardada só neste navegador.</p>
+    <div class="row">
+      <input id="apiKeyInput" type="password" placeholder="cole a SERVICE_API_KEY aqui" style="flex:1;min-width:260px;padding:9px 12px;border-radius:6px;background:var(--panel-2);color:var(--text);border:1px solid var(--border);font-size:13px" />
+      <button onclick="saveKey()">Salvar chave</button>
+      <button class="secondary" onclick="clearKey()">Limpar</button>
+    </div>
+    <div class="muted" id="keyMsg" style="margin-top:8px"></div>
+  </section>
+
   <section class="panel" id="connectPanel" style="display:none">
     <h2>Conectar ao Mercado Livre</h2>
     <p class="muted">Este serviço precisa de autorização no Mercado Livre (aplicativo próprio) para analisar seus anúncios.</p>
@@ -95,8 +107,31 @@ async function api(path) {
   if (apiKey()) headers['x-api-key'] = apiKey();
   const res = await fetch(path, { headers });
   const d = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(d.mensagem || ('HTTP ' + res.status));
+  if (!res.ok) {
+    const e = new Error(d.mensagem || ('HTTP ' + res.status));
+    e.status = res.status;
+    throw e;
+  }
   return d;
+}
+
+function toggleKeyPanel() {
+  const p = document.getElementById('keyPanel');
+  const abrir = p.style.display === 'none';
+  p.style.display = abrir ? '' : 'none';
+  if (abrir) document.getElementById('apiKeyInput').value = apiKey();
+}
+function saveKey() {
+  const v = document.getElementById('apiKeyInput').value.trim();
+  if (!v) { document.getElementById('keyMsg').textContent = 'Cole a chave antes de salvar.'; return; }
+  localStorage.setItem('tiny_api_key', v);
+  document.getElementById('keyMsg').textContent = 'Chave salva. Recarregando...';
+  setTimeout(() => location.reload(), 400);
+}
+function clearKey() {
+  localStorage.removeItem('tiny_api_key');
+  document.getElementById('apiKeyInput').value = '';
+  document.getElementById('keyMsg').textContent = 'Chave removida.';
 }
 function fmtMoney(n) { return n == null ? '—' : 'R$ ' + Number(n).toFixed(2).replace('.', ','); }
 function fmtHora(iso) { try { return new Date(iso).toLocaleString('pt-BR'); } catch (e) { return iso; } }
@@ -163,6 +198,13 @@ async function load(forcar) {
     render();
   } catch (e) {
     document.getElementById('info').textContent = 'Erro: ' + e.message;
+    // Chave ausente/invalida: abre o painel da chave automaticamente.
+    if (e.status === 401 || /x-api-key/i.test(e.message || '')) {
+      const p = document.getElementById('keyPanel');
+      p.style.display = '';
+      document.getElementById('apiKeyInput').value = apiKey();
+      document.getElementById('keyMsg').textContent = 'Cole a SERVICE_API_KEY do serviço para liberar as análises.';
+    }
   }
 }
 
