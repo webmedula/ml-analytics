@@ -162,3 +162,18 @@ export interface MlPriceToWin {
 export async function getPriceToWin(itemId: string): Promise<MlPriceToWin> {
   return mlRequest<MlPriceToWin>(`/items/${itemId}/price_to_win?version=v2`);
 }
+
+/** Produto de catalogo (traz o buy_box_winner: quem esta ganhando a pagina, com item/seller/preco). */
+export async function getCatalogProduct(productId: string): Promise<any> {
+  return mlRequest<any>(`/products/${productId}`);
+}
+
+/** Diagnostico: devolve as respostas CRUAS do ML pra um anuncio (atributos + price_to_win + produto). */
+export async function debugItemRaw(itemId: string): Promise<any> {
+  const [attr] = await getItemsAttributes([itemId]);
+  const priceToWin = await getPriceToWin(itemId).catch((e) => ({ erro: String(e?.message || e) }));
+  let product: any = null;
+  const productId = attr?.catalog_product_id;
+  if (productId) product = await getCatalogProduct(productId).catch((e) => ({ erro: String(e?.message || e) }));
+  return { itemId, catalogProductId: productId ?? null, attr: attr ?? null, priceToWin, product };
+}
