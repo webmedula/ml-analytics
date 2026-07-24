@@ -90,7 +90,8 @@
       <thead><tr>
         <th>Situação</th><th>Anúncio</th>
         <th class="num">Preço atual</th><th class="num">Preço p/ ganhar</th>
-        <th class="num">Diferença</th><th class="num">Vendidos</th><th class="num">Estoque</th>
+        <th class="num">Diferença</th><th>Concorrente (vencedor)</th>
+        <th class="num">Vendidos</th><th class="num">Estoque</th>
       </tr></thead>
       <tbody id="tbody"></tbody>
     </table>
@@ -159,12 +160,20 @@ function render() {
   tb.innerHTML = itens.map(i => {
     const diff = i.gap != null ? fmtMoney(i.gap) + (i.gapPercent != null ? ' <span class="muted">(' + i.gapPercent.toFixed(1) + '%)</span>' : '') : '—';
     const link = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + (i.title || i.itemId) + '</a>' : (i.title || i.itemId);
+    // Concorrente vencedor (só nos que estamos perdendo): nome do vendedor (link p/ o anúncio dele) + preço dele.
+    let conc = '—';
+    if (i.situacao === 'perdendo' && (i.vencedorNickname || i.precoVencedor != null || i.vencedorPermalink)) {
+      const nome = i.vencedorNickname || 'vendedor';
+      const nomeHtml = i.vencedorPermalink ? '<a href="' + i.vencedorPermalink + '" target="_blank" rel="noopener">' + nome + '</a>' : nome;
+      conc = nomeHtml + '<div class="muted">' + (i.precoVencedor != null ? fmtMoney(i.precoVencedor) : '') + '</div>';
+    }
     return '<tr>' +
       '<td><span class="tag ' + i.situacao + '">' + i.situacao + '</span></td>' +
       '<td class="title-cell">' + link + '<div class="muted">' + i.itemId + '</div></td>' +
       '<td class="num">' + fmtMoney(i.precoAtual) + '</td>' +
       '<td class="num">' + fmtMoney(i.precoParaGanhar) + '</td>' +
       '<td class="num">' + diff + '</td>' +
+      '<td>' + conc + '</td>' +
       '<td class="num">' + (i.vendidos ?? '—') + '</td>' +
       '<td class="num">' + (i.disponivel ?? '—') + '</td>' +
       '</tr>';
@@ -210,13 +219,16 @@ async function load(forcar) {
 
 function exportCsv() {
   if (!data) return;
-  const linhas = [['item_id', 'titulo', 'situacao', 'preco_atual', 'preco_para_ganhar', 'diferenca', 'diferenca_pct', 'vendidos', 'estoque', 'permalink']];
+  const linhas = [['item_id', 'titulo', 'situacao', 'preco_atual', 'preco_para_ganhar', 'diferenca', 'diferenca_pct', 'concorrente_vendedor', 'concorrente_preco', 'concorrente_anuncio', 'vendidos', 'estoque', 'permalink']];
   for (const i of data.items) linhas.push([
     i.itemId, i.title || '', i.situacao,
     i.precoAtual != null ? String(i.precoAtual).replace('.', ',') : '',
     i.precoParaGanhar != null ? String(i.precoParaGanhar).replace('.', ',') : '',
     i.gap != null ? String(i.gap).replace('.', ',') : '',
     i.gapPercent != null ? String(i.gapPercent).replace('.', ',') : '',
+    i.vencedorNickname || '',
+    i.precoVencedor != null ? String(i.precoVencedor).replace('.', ',') : '',
+    i.vencedorPermalink || '',
     i.vendidos ?? '', i.disponivel ?? '', i.permalink || '',
   ]);
   const csv = linhas.map(l => l.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(';')).join('\n');

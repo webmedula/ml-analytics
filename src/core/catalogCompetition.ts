@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from '../config';
 import { logger } from '../logger';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
-import { getItemsAttributes, getPriceToWin, getSellerItemIds, MlItemAttributes, MlPriceToWin } from '../ml/mlClient';
+import { getItemsAttributes, getPriceToWin, getSellerItemIds, getSellerNickname, MlItemAttributes, MlPriceToWin } from '../ml/mlClient';
 
 /**
  * Analise de concorrencia de CATALOGO (Buy Box) dos anuncios do proprio seller no Mercado Livre.
@@ -35,6 +35,11 @@ export interface CatalogCompetitionView {
   visitShare?: string | number | null;
   vendidos?: number;
   disponivel?: number;
+  // --- Concorrente que esta ganhando o Buy Box (preenchido para os que estamos perdendo) ---
+  vencedorItemId?: string | null;
+  vencedorSellerId?: number | null;
+  vencedorNickname?: string | null;
+  vencedorPermalink?: string | null;
 }
 
 function round2(n: number): number {
@@ -86,6 +91,8 @@ export function buildCompetitionView(item: MlItemAttributes, ptw: MlPriceToWin):
     visitShare: ptw.visit_share ?? null,
     vendidos: item.sold_quantity,
     disponivel: item.available_quantity,
+    vencedorItemId: ptw.winner?.item_id ?? null,
+    vencedorSellerId: ptw.winner?.seller_id ?? null,
   };
 }
 
@@ -159,6 +166,46 @@ export function refreshCatalogCompetition(): Promise<CatalogCompetitionResult> {
   return scanInFlight;
 }
 
+/**
+ * Preenche, para os anuncios que estamos PERDENDO, quem e o concorrente vencedor: link do anuncio
+ * dele e apelido (nickname) do vendedor. Faz isso em lote (multiget dos anuncios vencedores) e
+ * resolve cada vendedor unico uma vez so, pra gastar o minimo de chamadas ao ML.
+ */
+async function enrichVencedores(views: CatalogCompetitionView[]): Promise<void> {
+  const perdendo = views.filter((v) => v.situacao === 'perdendo' && v.vencedorItemId);
+  if (perdendo.length === 0) return;
+
+  // 1) link + seller_id do anuncio vencedor (multiget)
+  const winnerIds = Array.from(new Set(perdendo.map((v) => v.vencedorItemId as string)));
+  const winnerAttrs = new Map<string, MlItemAttributes>();
+  try {
+    for (const it of await getItemsAttributes(winnerIds)) winnerAttrs.set(it.id, it);
+  } catch (err: any) {
+    logger.warn('[CATALOGO] Falha ao buscar anuncios vencedores:', err?.message || err);
+  }
+
+  // 2) apelido de cada vendedor unico (1 chamada por vendedor, cacheada no map)
+  const sellerIds = new Set<number>();
+  for (const v of perdendo) {
+    const sid = v.vencedorSellerId ?? winnerAttrs.get(v.vencedorItemId as string)?.seller_id ?? null;
+    if (sid) sellerIds.add(sid);
+  }
+  const nicknames = new Map<number, string | null>();
+  for (const sid of sellerIds) {
+    nicknames.set(sid, await getSellerNickname(sid));
+    await sleep(120);
+  }
+
+  // 3) atribui de volta em cada view
+  for (const v of perdendo) {
+    const wa = winnerAttrs.get(v.vencedorItemId as string);
+    v.vencedorPermalink = wa?.permalink ?? null;
+    const sid = v.vencedorSellerId ?? wa?.seller_id ?? null;
+    v.vencedorSellerId = sid;
+    v.vencedorNickname = sid ? nicknames.get(sid) ?? null : null;
+  }
+}
+
 async function doScan(): Promise<CatalogCompetitionResult> {
   if (!getMlAuthStatus().authenticated) {
     throw new Error('Mercado Livre nao autorizado. Acesse /oauth/ml/login para conectar.');
@@ -184,6 +231,8 @@ async function doScan(): Promise<CatalogCompetitionResult> {
     }
     await sleep(200); // respeita a cota do ML sem correr risco de rajada
   }
+
+  await enrichVencedores(views);
 
   const sorted = sortCompetitionViews(views);
   const result: CatalogCompetitionResult = {

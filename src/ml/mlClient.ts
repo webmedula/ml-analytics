@@ -114,11 +114,12 @@ export interface MlItemAttributes {
   permalink?: string;
   sold_quantity?: number;
   available_quantity?: number;
+  seller_id?: number;
 }
 
 /** Multiget de atributos de varios itens (o ML aceita ate 20 ids por chamada em /items?ids=). */
 export async function getItemsAttributes(ids: string[]): Promise<MlItemAttributes[]> {
-  const attrs = 'id,title,price,currency_id,status,catalog_listing,catalog_product_id,permalink,sold_quantity,available_quantity';
+  const attrs = 'id,title,price,currency_id,status,catalog_listing,catalog_product_id,permalink,sold_quantity,available_quantity,seller_id';
   const out: MlItemAttributes[] = [];
 
   for (let i = 0; i < ids.length; i += 20) {
@@ -132,6 +133,16 @@ export async function getItemsAttributes(ids: string[]): Promise<MlItemAttribute
   }
 
   return out;
+}
+
+/** Apelido (nickname) publico de um vendedor no Mercado Livre — usado pra mostrar QUEM ganhou o Buy Box. */
+export async function getSellerNickname(sellerId: number): Promise<string | null> {
+  try {
+    const u = await mlRequest<{ nickname?: string }>(`/users/${sellerId}`);
+    return u?.nickname ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export interface MlPriceToWin {

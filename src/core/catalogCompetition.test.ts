@@ -47,6 +47,17 @@ describe('buildCompetitionView — calculo do gap', () => {
     const v = buildCompetitionView(item(), ptw);
     expect(v.gap).toBeNull();
   });
+
+  it('captura o concorrente vencedor (item e vendedor) do price_to_win', () => {
+    const ptw: MlPriceToWin = {
+      status: 'competing', current_price: 120, price_to_win: 100,
+      winner: { item_id: 'MLB999', price: 98, seller_id: 555 },
+    };
+    const v = buildCompetitionView(item(), ptw);
+    expect(v.vencedorItemId).toBe('MLB999');
+    expect(v.vencedorSellerId).toBe(555);
+    expect(v.precoVencedor).toBe(98);
+  });
 });
 
 describe('sortCompetitionViews — ordena por urgencia', () => {
