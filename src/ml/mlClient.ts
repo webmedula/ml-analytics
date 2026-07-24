@@ -177,6 +177,53 @@ export async function getCatalogProduct(productId: string): Promise<any> {
   return mlRequest<any>(`/products/${productId}`);
 }
 
+export interface MlQuestion {
+  id: number;
+  text: string;
+  itemId: string;
+  dateCreated: string;
+  /** preenchido depois com o titulo/permalink do anuncio perguntado. */
+  itemTitle?: string;
+  permalink?: string;
+}
+
+/** Perguntas SEM resposta recebidas pelo vendedor (exige permissao de Perguntas no app do ML).
+ * Ja preenche o titulo/permalink do anuncio de cada pergunta (multiget dos itens, em lote). */
+export async function getUnansweredQuestions(max = 100): Promise<MlQuestion[]> {
+  const sellerId = await getMlUserId();
+  const limit = 50;
+  let offset = 0;
+  const out: MlQuestion[] = [];
+
+  for (;;) {
+    const data = await mlRequest<{ questions?: any[]; total?: number }>(
+      `/questions/search?seller_id=${sellerId}&status=UNANSWERED&sort_fields=date_created&sort_types=DESC&limit=${limit}&offset=${offset}`,
+    );
+    const qs = data.questions || [];
+    for (const q of qs) out.push({ id: q.id, text: q.text ?? '', itemId: q.item_id, dateCreated: q.date_created });
+    offset += limit;
+    const total = data.total ?? out.length;
+    if (qs.length === 0 || out.length >= max || offset >= total) break;
+  }
+
+  const ids = Array.from(new Set(out.map((q) => q.itemId).filter(Boolean)));
+  if (ids.length > 0) {
+    const attrs = new Map<string, MlItemAttributes>();
+    try {
+      for (const it of await getItemsAttributes(ids)) attrs.set(it.id, it);
+    } catch {
+      // sem titulos: segue so com o id
+    }
+    for (const q of out) {
+      const a = attrs.get(q.itemId);
+      q.itemTitle = a?.title;
+      q.permalink = a?.permalink;
+    }
+  }
+
+  return out.slice(0, max);
+}
+
 /** Diagnostico: devolve as respostas CRUAS do ML pra um anuncio (atributos + price_to_win +
  * produto + o anuncio do concorrente vencedor, pra confirmar se da pra pegar o vendedor dele). */
 export async function debugItemRaw(itemId: string): Promise<any> {

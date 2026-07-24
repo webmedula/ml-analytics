@@ -22,27 +22,34 @@
   button:hover { background: var(--accent-2); }
   button.secondary { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .muted { color: var(--text-dim); font-size: 12px; }
   a { color: var(--accent); text-decoration: none; }
-  .cards { display: flex; gap: 16px; flex-wrap: wrap; }
-  .card { flex: 1; min-width: 150px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
-  .card .t { font-weight: 600; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
-  .card .v { font-size: 22px; font-weight: 700; }
-  .card .v.warn { color: var(--yellow); } .card .v.bad { color: var(--red); } .card .v.ok { color: var(--green); }
-  .empty { color: var(--text-dim); font-size: 13px; padding: 16px 0; text-align: center; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .kpi { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; cursor: pointer; transition: border-color .12s; }
+  .kpi:hover { border-color: var(--accent); }
+  .kpi.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .kpi .t { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+  .kpi .v { font-size: 26px; font-weight: 700; line-height: 1; }
+  .kpi .v.bad { color: var(--red); } .kpi .v.ok { color: var(--green); } .kpi .v.warn { color: var(--yellow); }
+  .kpi .sub { font-size: 12px; color: var(--text-dim); margin-top: 6px; }
+  .kpi.disabled { cursor: default; opacity: .7; } .kpi.disabled:hover { border-color: var(--border); }
+  .insight { display: flex; gap: 10px; align-items: flex-start; background: rgba(59,130,246,.12); border: 1px solid rgba(59,130,246,.3); border-radius: 10px; padding: 14px 16px; font-size: 14px; color: #cfe0ff; line-height: 1.5; }
   .tag { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
   .tag.perdendo { background: rgba(239,68,68,.15); color: var(--red); }
   .tag.ganhando { background: rgba(34,197,94,.15); color: var(--green); }
   .tag.empatado { background: rgba(234,179,8,.15); color: var(--yellow); }
   .tag.indefinido { background: var(--panel-2); color: var(--text-dim); }
   .tag.motivo { background: rgba(59,130,246,.15); color: var(--accent); margin: 0 3px 3px 0; display: inline-block; }
-  .title-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .motivo-cell { max-width: 220px; }
-  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
-  .dot.on { background: var(--green); } .dot.off { background: var(--red); }
+  .title-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .motivo-cell { max-width: 200px; }
+  .chartwrap { position: relative; width: 100%; height: 230px; }
+  .detail-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  input.mini { padding: 7px 10px; border-radius: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); font-size: 13px; width: 70px; }
+  .qrow { padding: 11px 2px; border-bottom: 1px solid var(--border); }
+  .qrow .qtext { font-size: 14px; margin-bottom: 3px; }
 </style>
 </head>
 <body>
@@ -52,12 +59,8 @@
   <div class="row">
     <span class="muted" id="mlStatus"></span>
     <span class="muted" id="info"></span>
-    <select id="filtro" class="secondary" onchange="render()" style="padding:8px;border-radius:6px;background:var(--panel-2);color:var(--text);border:1px solid var(--border)">
-      <option value="perdendo">Só perdendo</option>
-      <option value="todos">Todos</option>
-    </select>
     <button class="secondary" onclick="exportCsv()">Exportar CSV</button>
-    <button class="secondary" onclick="load(true)">Atualizar (revarrer)</button>
+    <button class="secondary" onclick="load(true)">Atualizar</button>
     <button class="secondary" onclick="toggleKeyPanel()">🔑 Chave</button>
   </div>
 </header>
@@ -80,29 +83,30 @@
     <a href="/oauth/ml/login"><button>Conectar ao Mercado Livre</button></a>
   </section>
 
-  <section class="panel" id="resumoPanel">
-    <h2>Resumo</h2>
+  <section class="panel" id="visaoPanel">
+    <h2>Visão geral</h2>
     <div class="cards" id="cards"></div>
-    <div class="muted" id="obs" style="margin-top:12px"></div>
+    <div class="insight" id="insight" style="margin-top:16px; display:none"></div>
+    <h2 style="margin-top:20px">Anúncios perdendo por falta de cada vantagem</h2>
+    <div class="chartwrap"><canvas id="boostChart"></canvas></div>
   </section>
 
-  <section class="panel" id="tabelaPanel">
-    <h2>Anúncios de catálogo</h2>
-    <table>
-      <thead><tr>
-        <th>Situação</th><th>Anúncio</th>
-        <th class="num">Preço atual</th><th class="num">Preço p/ ganhar</th>
-        <th class="num">Diferença</th><th>Por que está perdendo</th><th>Concorrente (vencedor)</th>
-        <th class="num">Vendidos</th><th class="num">Estoque</th>
-      </tr></thead>
-      <tbody id="tbody"></tbody>
-    </table>
-    <div id="vazio" class="empty" style="display:none"></div>
+  <section class="panel" id="detailPanel">
+    <div class="detail-head">
+      <h2 style="margin:0" id="detailTitle">Detalhe</h2>
+      <div class="row" id="detailControls"></div>
+    </div>
+    <div id="detailBody"></div>
   </section>
 </main>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
-let data = null;
+let data = null;        // resultado do /api/catalog/competition
+let perguntas = [];     // perguntas sem resposta
+let filtro = 'perdendo';
+let estoqueLimite = 5;
+let chart = null;
 
 function apiKey() { return localStorage.getItem('tiny_api_key') || ''; }
 async function api(path) {
@@ -110,103 +114,154 @@ async function api(path) {
   if (apiKey()) headers['x-api-key'] = apiKey();
   const res = await fetch(path, { headers });
   const d = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const e = new Error(d.mensagem || ('HTTP ' + res.status));
-    e.status = res.status;
-    throw e;
-  }
+  if (!res.ok) { const e = new Error(d.mensagem || ('HTTP ' + res.status)); e.status = res.status; throw e; }
   return d;
-}
-
-function toggleKeyPanel() {
-  const p = document.getElementById('keyPanel');
-  const abrir = p.style.display === 'none';
-  p.style.display = abrir ? '' : 'none';
-  if (abrir) document.getElementById('apiKeyInput').value = apiKey();
-}
-function saveKey() {
-  const v = document.getElementById('apiKeyInput').value.trim();
-  if (!v) { document.getElementById('keyMsg').textContent = 'Cole a chave antes de salvar.'; return; }
-  localStorage.setItem('tiny_api_key', v);
-  document.getElementById('keyMsg').textContent = 'Chave salva. Recarregando...';
-  setTimeout(() => location.reload(), 400);
-}
-function clearKey() {
-  localStorage.removeItem('tiny_api_key');
-  document.getElementById('apiKeyInput').value = '';
-  document.getElementById('keyMsg').textContent = 'Chave removida.';
 }
 function fmtMoney(n) { return n == null ? '—' : 'R$ ' + Number(n).toFixed(2).replace('.', ','); }
 function fmtHora(iso) { try { return new Date(iso).toLocaleString('pt-BR'); } catch (e) { return iso; } }
-function card(t, v, cls) { return '<div class="card"><div class="t">' + t + '</div><div class="v ' + (cls || '') + '">' + v + '</div></div>'; }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function toggleKeyPanel() { const p = document.getElementById('keyPanel'); const a = p.style.display === 'none'; p.style.display = a ? '' : 'none'; if (a) document.getElementById('apiKeyInput').value = apiKey(); }
+function saveKey() { const v = document.getElementById('apiKeyInput').value.trim(); if (!v) { document.getElementById('keyMsg').textContent = 'Cole a chave antes de salvar.'; return; } localStorage.setItem('tiny_api_key', v); document.getElementById('keyMsg').textContent = 'Chave salva. Recarregando...'; setTimeout(() => location.reload(), 400); }
+function clearKey() { localStorage.removeItem('tiny_api_key'); document.getElementById('apiKeyInput').value = ''; document.getElementById('keyMsg').textContent = 'Chave removida.'; }
 
 function showConnect(connected) {
   document.getElementById('connectPanel').style.display = connected ? 'none' : '';
-  document.getElementById('resumoPanel').style.display = connected ? '' : 'none';
-  document.getElementById('tabelaPanel').style.display = connected ? '' : 'none';
-  document.getElementById('mlStatus').innerHTML = '<span class="dot ' + (connected ? 'on' : 'off') + '"></span>ML ' + (connected ? 'conectado' : 'desconectado');
+  document.getElementById('visaoPanel').style.display = connected ? '' : 'none';
+  document.getElementById('detailPanel').style.display = connected ? '' : 'none';
+  document.getElementById('mlStatus').innerHTML = '<span style="color:' + (connected ? 'var(--green)' : 'var(--red)') + '">●</span> ML ' + (connected ? 'conectado' : 'desconectado');
 }
 
-function render() {
-  if (!data) return;
-  const filtro = document.getElementById('filtro').value;
-  const itens = filtro === 'perdendo' ? data.items.filter(i => i.situacao === 'perdendo') : data.items;
+// --- grupos/filtros a partir dos dados ---
+function itens() { return (data && data.items) || []; }
+function perdendo() { return itens().filter(i => i.situacao === 'perdendo'); }
+function perdendoVantagem() { return perdendo().filter(i => i.naoEhPreco); }
+function perdendoPreco() { return perdendo().filter(i => !i.naoEhPreco); }
+function ganhando() { return itens().filter(i => i.situacao === 'ganhando'); }
+function empatado() { return itens().filter(i => i.situacao === 'empatado'); }
+function estoqueBaixo() { return itens().filter(i => i.disponivel != null && i.disponivel <= estoqueLimite); }
+function oportunidades() { return perdendoPreco().slice().sort((a, b) => (b.vendidos || 0) - (a.vendidos || 0)); }
 
-  document.getElementById('cards').innerHTML =
-    card('Anúncios de catálogo', data.totalCatalogo) +
-    card('Perdendo o Buy Box', data.perdendo, data.perdendo > 0 ? 'bad' : 'ok') +
-    card('Ganhando', data.items.filter(i => i.situacao === 'ganhando').length, 'ok') +
-    card('Empatado', data.items.filter(i => i.situacao === 'empatado').length, 'warn');
-
-  const tb = document.getElementById('tbody');
-  tb.innerHTML = itens.map(i => {
-    const diff = i.gap != null ? fmtMoney(i.gap) + (i.gapPercent != null ? ' <span class="muted">(' + i.gapPercent.toFixed(1) + '%)</span>' : '') : '—';
-    const link = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + (i.title || i.itemId) + '</a>' : (i.title || i.itemId);
-    // Concorrente vencedor (só nos que estamos perdendo): nome do vendedor (se o ML expuser) e
-    // link para o anúncio dele — ou, à prova de falha, para a página do produto no catálogo.
-    let conc = '—';
-    if (i.situacao === 'perdendo' && (i.vencedorNickname || i.precoVencedor != null || i.vencedorPermalink || i.catalogProductId)) {
-      const clink = i.vencedorPermalink || (i.catalogProductId ? 'https://www.mercadolivre.com.br/p/' + i.catalogProductId : null);
-      const nome = i.vencedorNickname || 'ver anúncio vencedor';
-      const nomeHtml = clink ? '<a href="' + clink + '" target="_blank" rel="noopener">' + nome + '</a>' : nome;
-      conc = nomeHtml + '<div class="muted">' + (i.precoVencedor != null ? fmtMoney(i.precoVencedor) : '') + '</div>';
-    }
-    // Por que está perdendo: vantagens que o vencedor tem e você não (boosts). Se não houver, é preço.
-    let motivo = '—';
-    if (i.situacao === 'perdendo') {
-      if (i.motivosPerdendo && i.motivosPerdendo.length) {
-        const tags = i.motivosPerdendo.map(m => '<span class="tag motivo">' + m + '</span>').join('');
-        motivo = (i.naoEhPreco ? '<div class="muted" style="margin-bottom:4px">Não é preço — iguale:</div>' : '') + tags;
-      } else {
-        motivo = '<span class="muted">É preço — baixe para ganhar</span>';
-      }
-    }
-    return '<tr>' +
-      '<td><span class="tag ' + i.situacao + '">' + i.situacao + '</span></td>' +
-      '<td class="title-cell">' + link + '<div class="muted">' + i.itemId + '</div></td>' +
-      '<td class="num">' + fmtMoney(i.precoAtual) + '</td>' +
-      '<td class="num">' + (i.naoEhPreco ? '<span class="muted">' + fmtMoney(i.precoParaGanhar) + '</span>' : fmtMoney(i.precoParaGanhar)) + '</td>' +
-      '<td class="num">' + diff + '</td>' +
-      '<td class="motivo-cell">' + motivo + '</td>' +
-      '<td>' + conc + '</td>' +
-      '<td class="num">' + (i.vendidos ?? '—') + '</td>' +
-      '<td class="num">' + (i.disponivel ?? '—') + '</td>' +
-      '</tr>';
-  }).join('');
-
-  const vazio = document.getElementById('vazio');
-  if (itens.length === 0) {
-    vazio.style.display = '';
-    vazio.textContent = filtro === 'perdendo' ? 'Nenhum anúncio perdendo o Buy Box 🎉' : 'Nenhum anúncio de catálogo encontrado.';
-  } else {
-    vazio.style.display = 'none';
+function grupoAtual() {
+  switch (filtro) {
+    case 'todos': return itens();
+    case 'perdendo': return perdendo();
+    case 'perdendo_vantagem': return perdendoVantagem();
+    case 'perdendo_preco': return perdendoPreco();
+    case 'ganhando': return ganhando();
+    case 'empatado': return empatado();
+    case 'estoque_baixo': return estoqueBaixo();
+    case 'oportunidades': return oportunidades();
+    default: return itens();
   }
+}
+const rotulos = { todos: 'todos os anúncios', perdendo: 'perdendo o Buy Box', perdendo_vantagem: 'perdendo por vantagem (frete/entrega)', perdendo_preco: 'perdendo por preço', ganhando: 'ganhando', empatado: 'empatado', estoque_baixo: 'estoque baixo', oportunidades: 'oportunidades de preço', perguntas: 'perguntas sem resposta' };
 
-  document.getElementById('obs').innerHTML =
-    (data.truncado ? '⚠️ A varredura atingiu o teto de anúncios — pode haver mais não analisados (ajuste CATALOG_SCAN_MAX_ITEMS). ' : '') +
-    'Perdendo = outro vendedor está ganhando a página. "Preço p/ ganhar" = valor sugerido pelo ML para reassumir o Buy Box. ' +
-    '"Diferença" = quanto (R$ e % do seu preço) você teria que cortar. "Por que está perdendo": quando aparece "Não é preço", ' +
-    'o concorrente ganha pelas vantagens listadas (frete grátis, Full, mesmo dia, parcelamento) — baixar o preço não resolve, iguale essas vantagens.';
+function setFiltro(f) { filtro = f; renderCards(); renderDetail(); document.getElementById('detailPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+
+function kpi(id, t, v, cls, sub) {
+  const active = filtro === id ? ' active' : '';
+  return '<div class="kpi' + active + '" onclick="setFiltro(\'' + id + '\')"><div class="t">' + t + '</div>' +
+    '<div class="v ' + (cls || '') + '">' + v + '</div>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
+}
+
+function renderCards() {
+  const c = document.getElementById('cards');
+  c.innerHTML =
+    kpi('todos', 'Anúncios de catálogo', itens().length, '') +
+    kpi('perdendo', 'Perdendo Buy Box', perdendo().length, perdendo().length ? 'bad' : 'ok', perdendoPreco().length + ' preço · ' + perdendoVantagem().length + ' vantagem') +
+    kpi('ganhando', 'Ganhando', ganhando().length, 'ok') +
+    kpi('oportunidades', 'Oportunidades de preço', oportunidades().length, oportunidades().length ? 'warn' : 'ok', 'perde por preço, vende bem') +
+    kpi('estoque_baixo', 'Estoque baixo', estoqueBaixo().length, estoqueBaixo().length ? 'warn' : 'ok', '≤ ' + estoqueLimite + ' un.') +
+    kpi('perguntas', 'Perguntas pendentes', perguntas.length, perguntas.length ? 'warn' : 'ok', 'sem resposta') +
+    '<div class="kpi disabled"><div class="t">Conversão média</div><div class="v">—</div><div class="sub">em breve (visitas)</div></div>';
+}
+
+function renderInsight() {
+  const el = document.getElementById('insight');
+  const counts = {};
+  for (const i of perdendoVantagem()) for (const m of (i.motivosPerdendo || [])) counts[m] = (counts[m] || 0) + 1;
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  if (top && top[1] > 0) {
+    el.style.display = '';
+    el.innerHTML = '💡 A vantagem que mais falta é <b>' + esc(top[0]) + '</b>: ' + top[1] + ' anúncio(s) perdem por causa dela. Ativá-la é o maior potencial de recuperar o Buy Box <b>sem baixar preço</b>.';
+  } else { el.style.display = 'none'; }
+}
+
+function renderChart() {
+  const counts = {};
+  for (const i of perdendoVantagem()) for (const m of (i.motivosPerdendo || [])) counts[m] = (counts[m] || 0) + 1;
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const labels = entries.map(e => e[0]);
+  const vals = entries.map(e => e[1]);
+  if (chart) chart.destroy();
+  const ctx = document.getElementById('boostChart');
+  if (labels.length === 0) { if (chart) chart.destroy(); ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height); return; }
+  chart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'Anúncios', data: vals, backgroundColor: '#3b82f6', borderRadius: 4, barThickness: 22 }] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.parsed.x + ' anúncio(s) perdem por falta de ' + c.label } } },
+      scales: { x: { beginAtZero: true, ticks: { precision: 0, color: '#9a9fab' }, grid: { color: 'rgba(154,159,171,0.2)' } }, y: { ticks: { color: '#9a9fab' }, grid: { display: false } } } }
+  });
+}
+
+function linhaAnuncio(i) {
+  const diff = i.gap != null ? fmtMoney(i.gap) + (i.gapPercent != null ? ' <span class="muted">(' + i.gapPercent.toFixed(1) + '%)</span>' : '') : '—';
+  const link = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.title || i.itemId) + '</a>' : esc(i.title || i.itemId);
+  let conc = '—';
+  if (i.situacao === 'perdendo' && (i.vencedorNickname || i.precoVencedor != null || i.catalogProductId)) {
+    const clink = i.vencedorPermalink || (i.catalogProductId ? 'https://www.mercadolivre.com.br/p/' + i.catalogProductId : null);
+    const nome = i.vencedorNickname || 'ver anúncio vencedor';
+    const nomeHtml = clink ? '<a href="' + clink + '" target="_blank" rel="noopener">' + esc(nome) + '</a>' : esc(nome);
+    conc = nomeHtml + '<div class="muted">' + (i.precoVencedor != null ? fmtMoney(i.precoVencedor) : '') + '</div>';
+  }
+  let motivo = '—';
+  if (i.situacao === 'perdendo') {
+    if (i.motivosPerdendo && i.motivosPerdendo.length) {
+      const tags = i.motivosPerdendo.map(m => '<span class="tag motivo">' + esc(m) + '</span>').join('');
+      motivo = (i.naoEhPreco ? '<div class="muted" style="margin-bottom:4px">Não é preço — iguale:</div>' : '') + tags;
+    } else { motivo = '<span class="muted">É preço — baixe para ganhar</span>'; }
+  }
+  return '<tr>' +
+    '<td><span class="tag ' + i.situacao + '">' + i.situacao + '</span></td>' +
+    '<td class="title-cell">' + link + '<div class="muted">' + i.itemId + '</div></td>' +
+    '<td class="num">' + fmtMoney(i.precoAtual) + '</td>' +
+    '<td class="num">' + (i.naoEhPreco ? '<span class="muted">' + fmtMoney(i.precoParaGanhar) + '</span>' : fmtMoney(i.precoParaGanhar)) + '</td>' +
+    '<td class="num">' + diff + '</td>' +
+    '<td class="motivo-cell">' + motivo + '</td>' +
+    '<td>' + conc + '</td>' +
+    '<td class="num">' + (i.vendidos ?? '—') + '</td>' +
+    '<td class="num">' + (i.disponivel ?? '—') + '</td>' +
+    '</tr>';
+}
+
+function renderDetail() {
+  document.getElementById('detailTitle').textContent = 'Detalhe: ' + (rotulos[filtro] || filtro);
+  const ctrl = document.getElementById('detailControls');
+  ctrl.innerHTML = (filtro === 'estoque_baixo'
+    ? 'estoque ≤ <input class="mini" type="number" min="0" value="' + estoqueLimite + '" onchange="estoqueLimite=Math.max(0,parseInt(this.value)||0); renderCards(); renderDetail();" /> un. &nbsp;'
+    : '') + '<button class="secondary" onclick="setFiltro(\'todos\')">Limpar filtro</button>';
+
+  const body = document.getElementById('detailBody');
+  if (filtro === 'perguntas') { body.innerHTML = renderPerguntas(); return; }
+
+  const grupo = grupoAtual();
+  if (grupo.length === 0) { body.innerHTML = '<div class="muted" style="padding:16px 0; text-align:center">Nenhum anúncio neste filtro.</div>'; return; }
+  body.innerHTML = '<table><thead><tr>' +
+    '<th>Situação</th><th>Anúncio</th><th class="num">Preço atual</th><th class="num">Preço p/ ganhar</th>' +
+    '<th class="num">Diferença</th><th>Por que está perdendo</th><th>Concorrente (vencedor)</th>' +
+    '<th class="num">Vendidos</th><th class="num">Estoque</th>' +
+    '</tr></thead><tbody>' + grupo.map(linhaAnuncio).join('') + '</tbody></table>';
+}
+
+function renderPerguntas() {
+  if (perguntas.length === 0) return '<div class="muted" style="padding:16px 0; text-align:center">Nenhuma pergunta sem resposta 🎉</div>';
+  return perguntas.map(q => {
+    const prod = q.permalink ? '<a href="' + q.permalink + '" target="_blank" rel="noopener">' + esc(q.itemTitle || q.itemId) + '</a>' : esc(q.itemTitle || q.itemId);
+    return '<div class="qrow"><div class="qtext">' + esc(q.text) + '</div>' +
+      '<div class="muted">' + prod + ' · ' + fmtHora(q.dateCreated) + '</div></div>';
+  }).join('');
 }
 
 async function load(forcar) {
@@ -217,17 +272,20 @@ async function load(forcar) {
     if (!h.mlAuthenticated) { document.getElementById('info').textContent = ''; return; }
   } catch (e) {}
 
-  document.getElementById('info').textContent = forcar ? 'revarrendo (pode levar um tempo)...' : 'carregando...';
+  document.getElementById('info').textContent = forcar ? 'atualizando (pode levar um tempo)...' : 'carregando...';
   try {
-    data = await api('/api/catalog/competition' + (forcar ? '?refresh=1' : ''));
+    const [cat, perg] = await Promise.all([
+      api('/api/catalog/competition' + (forcar ? '?refresh=1' : '')),
+      api('/api/questions/pending' + (forcar ? '?refresh=1' : '')).catch(() => ({ questions: [] })),
+    ]);
+    data = cat;
+    perguntas = perg.questions || [];
     document.getElementById('info').textContent = 'atualizado em ' + fmtHora(data.updatedAt);
-    render();
+    renderCards(); renderInsight(); renderChart(); renderDetail();
   } catch (e) {
     document.getElementById('info').textContent = 'Erro: ' + e.message;
-    // Chave ausente/invalida: abre o painel da chave automaticamente.
     if (e.status === 401 || /x-api-key/i.test(e.message || '')) {
-      const p = document.getElementById('keyPanel');
-      p.style.display = '';
+      const p = document.getElementById('keyPanel'); p.style.display = '';
       document.getElementById('apiKeyInput').value = apiKey();
       document.getElementById('keyMsg').textContent = 'Cole a SERVICE_API_KEY do serviço para liberar as análises.';
     }
@@ -243,19 +301,14 @@ function exportCsv() {
     i.precoParaGanhar != null ? String(i.precoParaGanhar).replace('.', ',') : '',
     i.gap != null ? String(i.gap).replace('.', ',') : '',
     i.gapPercent != null ? String(i.gapPercent).replace('.', ',') : '',
-    (i.motivosPerdendo || []).join(' + '),
-    i.naoEhPreco ? 'sim' : '',
-    i.vencedorNickname || '',
-    i.precoVencedor != null ? String(i.precoVencedor).replace('.', ',') : '',
-    i.vencedorPermalink || '',
+    (i.motivosPerdendo || []).join(' + '), i.naoEhPreco ? 'sim' : '',
+    i.vencedorNickname || '', i.precoVencedor != null ? String(i.precoVencedor).replace('.', ',') : '', i.vencedorPermalink || '',
     i.vendidos ?? '', i.disponivel ?? '', i.permalink || '',
   ]);
   const csv = linhas.map(l => l.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(';')).join('\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'catalogo-buybox-' + new Date().toISOString().slice(0, 10) + '.csv';
-  a.click();
+  a.href = URL.createObjectURL(blob); a.download = 'catalogo-buybox-' + new Date().toISOString().slice(0, 10) + '.csv'; a.click();
   URL.revokeObjectURL(a.href);
 }
 
