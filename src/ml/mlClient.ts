@@ -177,6 +177,63 @@ export async function getCatalogProduct(productId: string): Promise<any> {
   return mlRequest<any>(`/products/${productId}`);
 }
 
+/** Total de visitas por anuncio entre duas datas (YYYY-MM-DD). Usa o endpoint em lote
+ * /items/visits?ids= (ate 20 ids por chamada). Retorna um mapa itemId -> total de visitas. */
+export async function getVisitsForItems(ids: string[], dateFrom: string, dateTo: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < ids.length; i += 20) {
+    const chunk = ids.slice(i, i + 20);
+    try {
+      const data = await mlRequest<any[]>(`/items/visits?ids=${chunk.join(',')}&date_from=${dateFrom}&date_to=${dateTo}`);
+      for (const entry of data || []) {
+        if (entry?.item_id) out.set(entry.item_id, Number(entry.total_visits ?? 0));
+      }
+    } catch (err: any) {
+      logger.warn(`[VISITAS] Falha no lote de visitas:`, err?.message || err);
+    }
+  }
+  return out;
+}
+
+/** Unidades vendidas por anuncio nos ultimos `dias` (busca pedidos NAO cancelados via /orders/search),
+ * separando ja em duas janelas: total do periodo e ultimos 7 dias. */
+export async function getSoldUnitsByItem(dias = 30): Promise<Map<string, { total: number; d7: number }>> {
+  const sellerId = await getMlUserId();
+  const now = Date.now();
+  const fromIso = new Date(now - dias * 24 * 60 * 60 * 1000).toISOString();
+  const corte7 = now - 7 * 24 * 60 * 60 * 1000;
+
+  const out = new Map<string, { total: number; d7: number }>();
+  const limit = 50;
+  let offset = 0;
+  const MAX = 4000;
+
+  for (;;) {
+    const data = await mlRequest<{ results?: any[]; paging?: { total?: number } }>(
+      `/orders/search?seller=${sellerId}&order.date_created.from=${encodeURIComponent(fromIso)}&sort=date_desc&limit=${limit}&offset=${offset}`,
+    );
+    const orders = data.results || [];
+    for (const o of orders) {
+      if (String(o.status) === 'cancelled') continue;
+      const dt = new Date(o.date_created).getTime();
+      const dentro7 = Number.isFinite(dt) && dt >= corte7;
+      for (const it of o.order_items || []) {
+        const id = it?.item?.id;
+        if (!id) continue;
+        const q = Number(it.quantity ?? 0);
+        const cur = out.get(id) || { total: 0, d7: 0 };
+        cur.total += q;
+        if (dentro7) cur.d7 += q;
+        out.set(id, cur);
+      }
+    }
+    offset += limit;
+    const total = data.paging?.total ?? out.size;
+    if (orders.length === 0 || offset >= total || offset >= MAX) break;
+  }
+  return out;
+}
+
 export interface MlQuestion {
   id: number;
   text: string;
@@ -224,6 +281,20 @@ export async function getUnansweredQuestions(max = 100): Promise<MlQuestion[]> {
   return out.slice(0, max);
 }
 
+/** Tenta ler as avaliacoes (nota media + total) de um anuncio pela API oficial do ML. O ML
+ * restringiu esse recurso; retorna null se nao houver acesso. Duas rotas conhecidas sao tentadas. */
+export async function getItemRating(itemId: string): Promise<{ ratingAverage: number | null; total: number | null } | null> {
+  try {
+    const r = await mlRequest<any>(`/reviews/item/${itemId}`);
+    const avg = r?.rating_average ?? r?.paging?.rating_average ?? null;
+    const total = r?.paging?.total ?? r?.total ?? (Array.isArray(r?.reviews) ? r.reviews.length : null);
+    if (avg != null || total != null) return { ratingAverage: avg != null ? Number(avg) : null, total: total != null ? Number(total) : null };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Diagnostico: devolve as respostas CRUAS do ML pra um anuncio (atributos + price_to_win +
  * produto + o anuncio do concorrente vencedor, pra confirmar se da pra pegar o vendedor dele). */
 export async function debugItemRaw(itemId: string): Promise<any> {
@@ -242,5 +313,12 @@ export async function debugItemRaw(itemId: string): Promise<any> {
     winnerViaMultiget = (await getItemsAttributes([winnerItemId]).catch((e) => [{ erro: String(e?.message || e) }]))[0] ?? null;
     winnerViaSingle = await mlRequest<any>(`/items/${winnerItemId}`).catch((e) => ({ erro: String(e?.message || e) }));
   }
-  return { itemId, catalogProductId: productId ?? null, attr: attr ?? null, priceToWin, product, winnerItemId: winnerItemId ?? null, winnerViaMultiget, winnerViaSingle };
+  // Sondagem de AVALIACOES: tenta as rotas conhecidas de reviews pra ver se a sua conta tem acesso.
+  const reviewsViaItem = await mlRequest<any>(`/reviews/item/${itemId}`).catch((e) => ({ erro: String(e?.message || e) }));
+  const reviewsViaSearch = await mlRequest<any>(`/reviews/search?item_id=${itemId}`).catch((e) => ({ erro: String(e?.message || e) }));
+  const reviewsViaProduct = productId
+    ? await mlRequest<any>(`/reviews/item/${productId}`).catch((e) => ({ erro: String(e?.message || e) }))
+    : null;
+
+  return { itemId, catalogProductId: productId ?? null, attr: attr ?? null, priceToWin, product, winnerItemId: winnerItemId ?? null, winnerViaMultiget, winnerViaSingle, reviewsViaItem, reviewsViaSearch, reviewsViaProduct };
 }

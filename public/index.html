@@ -104,6 +104,8 @@
 <script>
 let data = null;        // resultado do /api/catalog/competition
 let perguntas = [];     // perguntas sem resposta
+let conversao = null;   // resultado do /api/conversion
+let janelaConv = '30';  // janela da conversao exibida: '30' ou '7'
 let filtro = 'perdendo';
 let estoqueLimite = 5;
 let chart = null;
@@ -139,7 +141,11 @@ function perdendoVantagem() { return perdendo().filter(i => i.naoEhPreco); }
 function perdendoPreco() { return perdendo().filter(i => !i.naoEhPreco); }
 function ganhando() { return itens().filter(i => i.situacao === 'ganhando'); }
 function empatado() { return itens().filter(i => i.situacao === 'empatado'); }
-function estoqueBaixo() { return itens().filter(i => i.disponivel != null && i.disponivel <= estoqueLimite); }
+// Base de TODOS os anuncios ativos (nao so catalogo): vem da varredura de conversao, que ja
+// busca todos. Se ainda nao carregou, cai pro catalogo.
+function baseListagens() { return (conversao && conversao.items) ? conversao.items : itens(); }
+function totalAtivos() { return conversao ? conversao.totalAnalisados : itens().length; }
+function estoqueBaixo() { return baseListagens().filter(i => i.disponivel != null && i.disponivel <= estoqueLimite).slice().sort((a, b) => (a.disponivel || 0) - (b.disponivel || 0)); }
 function oportunidades() { return perdendoPreco().slice().sort((a, b) => (b.vendidos || 0) - (a.vendidos || 0)); }
 
 function grupoAtual() {
@@ -152,10 +158,11 @@ function grupoAtual() {
     case 'empatado': return empatado();
     case 'estoque_baixo': return estoqueBaixo();
     case 'oportunidades': return oportunidades();
+    case 'listagens': return baseListagens();
     default: return itens();
   }
 }
-const rotulos = { todos: 'todos os anúncios', perdendo: 'perdendo o Buy Box', perdendo_vantagem: 'perdendo por vantagem (frete/entrega)', perdendo_preco: 'perdendo por preço', ganhando: 'ganhando', empatado: 'empatado', estoque_baixo: 'estoque baixo', oportunidades: 'oportunidades de preço', perguntas: 'perguntas sem resposta' };
+const rotulos = { todos: 'anúncios de catálogo', listagens: 'todos os anúncios ativos', perdendo: 'perdendo o Buy Box', perdendo_vantagem: 'perdendo por vantagem (frete/entrega)', perdendo_preco: 'perdendo por preço', ganhando: 'ganhando', empatado: 'empatado', estoque_baixo: 'estoque baixo', oportunidades: 'oportunidades de preço', perguntas: 'perguntas sem resposta', conversao: 'conversão (visitas × vendas)' };
 
 function setFiltro(f) { filtro = f; renderCards(); renderDetail(); document.getElementById('detailPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 
@@ -168,13 +175,21 @@ function kpi(id, t, v, cls, sub) {
 function renderCards() {
   const c = document.getElementById('cards');
   c.innerHTML =
-    kpi('todos', 'Anúncios de catálogo', itens().length, '') +
+    kpi('listagens', 'Anúncios ativos', totalAtivos(), '', 'todos os anúncios') +
+    kpi('todos', 'De catálogo', itens().length, '', 'disputam Buy Box') +
     kpi('perdendo', 'Perdendo Buy Box', perdendo().length, perdendo().length ? 'bad' : 'ok', perdendoPreco().length + ' preço · ' + perdendoVantagem().length + ' vantagem') +
     kpi('ganhando', 'Ganhando', ganhando().length, 'ok') +
     kpi('oportunidades', 'Oportunidades de preço', oportunidades().length, oportunidades().length ? 'warn' : 'ok', 'perde por preço, vende bem') +
-    kpi('estoque_baixo', 'Estoque baixo', estoqueBaixo().length, estoqueBaixo().length ? 'warn' : 'ok', '≤ ' + estoqueLimite + ' un.') +
+    kpi('estoque_baixo', 'Estoque baixo', estoqueBaixo().length, estoqueBaixo().length ? 'warn' : 'ok', '≤ ' + estoqueLimite + ' un. · todos') +
     kpi('perguntas', 'Perguntas pendentes', perguntas.length, perguntas.length ? 'warn' : 'ok', 'sem resposta') +
-    '<div class="kpi disabled"><div class="t">Conversão média</div><div class="v">—</div><div class="sub">em breve (visitas)</div></div>';
+    cardConversao();
+}
+
+function convMedia() { if (!conversao) return null; return janelaConv === '30' ? conversao.conversaoMedia30 : conversao.conversaoMedia7; }
+function cardConversao() {
+  if (!conversao) return '<div class="kpi disabled"><div class="t">Conversão média</div><div class="v">—</div><div class="sub">carregando visitas...</div></div>';
+  const m = convMedia();
+  return kpi('conversao', 'Conversão média', (m == null ? '—' : m.toFixed(1).replace('.', ',') + '%'), '', 'últimos ' + janelaConv + ' dias');
 }
 
 function renderInsight() {
@@ -239,12 +254,15 @@ function linhaAnuncio(i) {
 function renderDetail() {
   document.getElementById('detailTitle').textContent = 'Detalhe: ' + (rotulos[filtro] || filtro);
   const ctrl = document.getElementById('detailControls');
-  ctrl.innerHTML = (filtro === 'estoque_baixo'
-    ? 'estoque ≤ <input class="mini" type="number" min="0" value="' + estoqueLimite + '" onchange="estoqueLimite=Math.max(0,parseInt(this.value)||0); renderCards(); renderDetail();" /> un. &nbsp;'
-    : '') + '<button class="secondary" onclick="setFiltro(\'todos\')">Limpar filtro</button>';
+  let controls = '';
+  if (filtro === 'estoque_baixo') controls += 'estoque ≤ <input class="mini" type="number" min="0" value="' + estoqueLimite + '" onchange="estoqueLimite=Math.max(0,parseInt(this.value)||0); renderCards(); renderDetail();" /> un. &nbsp;';
+  if (filtro === 'conversao') controls += '<button class="secondary" onclick="setJanela(\'30\')" style="' + (janelaConv === '30' ? 'background:var(--accent);color:#fff' : '') + '">30 dias</button><button class="secondary" onclick="setJanela(\'7\')" style="' + (janelaConv === '7' ? 'background:var(--accent);color:#fff' : '') + '">7 dias</button>&nbsp;';
+  ctrl.innerHTML = controls + '<button class="secondary" onclick="setFiltro(\'todos\')">Limpar filtro</button>';
 
   const body = document.getElementById('detailBody');
   if (filtro === 'perguntas') { body.innerHTML = renderPerguntas(); return; }
+  if (filtro === 'conversao') { body.innerHTML = renderConversao(); return; }
+  if (filtro === 'listagens' || filtro === 'estoque_baixo') { body.innerHTML = renderListagens(grupoAtual()); return; }
 
   const grupo = grupoAtual();
   if (grupo.length === 0) { body.innerHTML = '<div class="muted" style="padding:16px 0; text-align:center">Nenhum anúncio neste filtro.</div>'; return; }
@@ -253,6 +271,42 @@ function renderDetail() {
     '<th class="num">Diferença</th><th>Por que está perdendo</th><th>Concorrente (vencedor)</th>' +
     '<th class="num">Vendidos</th><th class="num">Estoque</th>' +
     '</tr></thead><tbody>' + grupo.map(linhaAnuncio).join('') + '</tbody></table>';
+}
+
+function renderListagens(items) {
+  if (!items || items.length === 0) return '<div class="muted" style="padding:16px 0; text-align:center">Nenhum anúncio neste filtro.</div>';
+  const fonteConv = !!(conversao && conversao.items);
+  const rows = items.map(i => {
+    const nome = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.title || i.itemId) + '</a>' : esc(i.title || i.itemId);
+    const conv = i.conversao30 == null ? '—' : i.conversao30.toFixed(1).replace('.', ',') + '%';
+    return '<tr><td class="title-cell">' + nome + '<div class="muted">' + i.itemId + '</div></td>' +
+      '<td class="num">' + (i.disponivel ?? '—') + '</td>' +
+      '<td class="num">' + (i.visitas30 ?? '—') + '</td>' +
+      '<td class="num">' + (i.vendas30 ?? '—') + '</td>' +
+      '<td class="num">' + conv + '</td></tr>';
+  }).join('');
+  return (!fonteConv ? '<div class="muted" style="margin-bottom:8px">Visitas/vendas aparecem após a varredura de conversão terminar (background).</div>' : '') +
+    '<table><thead><tr><th>Anúncio</th><th class="num">Estoque</th><th class="num">Visitas 30d</th><th class="num">Vendas 30d</th><th class="num">Conversão 30d</th></tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+function setJanela(j) { janelaConv = j; renderCards(); renderDetail(); }
+
+function renderConversao() {
+  if (!conversao || !conversao.items || conversao.items.length === 0) return '<div class="muted" style="padding:16px 0; text-align:center">Sem dados de conversão ainda — a varredura de visitas roda em background após conectar.</div>';
+  const w = janelaConv;
+  const rows = conversao.items.map(i => {
+    const vis = w === '30' ? i.visitas30 : i.visitas7;
+    const ven = w === '30' ? i.vendas30 : i.vendas7;
+    const conv = w === '30' ? i.conversao30 : i.conversao7;
+    const convTxt = conv == null ? '<span class="muted">sem visitas</span>' : conv.toFixed(1).replace('.', ',') + '%';
+    const alerta = (conv != null && vis >= 30 && conv < 1) ? ' <span class="tag motivo">muita visita, pouca venda</span>' : '';
+    const nome = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.title || i.itemId) + '</a>' : esc(i.title || i.itemId);
+    return '<tr><td class="title-cell">' + nome + '<div class="muted">' + i.itemId + '</div></td>' +
+      '<td class="num">' + vis + '</td><td class="num">' + ven + '</td>' +
+      '<td class="num">' + convTxt + alerta + '</td></tr>';
+  }).join('');
+  return '<div class="muted" style="margin-bottom:8px">Ordenado por menor conversão (maior potencial de melhoria). "Muita visita, pouca venda" = provável problema de preço, foto ou reputação; poucas visitas = problema de posicionamento.</div>' +
+    '<table><thead><tr><th>Anúncio</th><th class="num">Visitas (' + w + 'd)</th><th class="num">Vendas (' + w + 'd)</th><th class="num">Conversão</th></tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
 function renderPerguntas() {
@@ -274,12 +328,14 @@ async function load(forcar) {
 
   document.getElementById('info').textContent = forcar ? 'atualizando (pode levar um tempo)...' : 'carregando...';
   try {
-    const [cat, perg] = await Promise.all([
+    const [cat, perg, conv] = await Promise.all([
       api('/api/catalog/competition' + (forcar ? '?refresh=1' : '')),
       api('/api/questions/pending' + (forcar ? '?refresh=1' : '')).catch(() => ({ questions: [] })),
+      api('/api/conversion' + (forcar ? '?refresh=1' : '')).catch(() => null),
     ]);
     data = cat;
     perguntas = perg.questions || [];
+    conversao = conv;
     document.getElementById('info').textContent = 'atualizado em ' + fmtHora(data.updatedAt);
     renderCards(); renderInsight(); renderChart(); renderDetail();
   } catch (e) {

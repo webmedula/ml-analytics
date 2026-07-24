@@ -2,6 +2,7 @@ import { config } from './config';
 import { logger } from './logger';
 import { buildServer } from './server';
 import { startCatalogLoop } from './core/catalogCompetition';
+import { startConversionLoop } from './core/conversion';
 
 async function main(): Promise<void> {
   const app = buildServer();
@@ -12,6 +13,7 @@ async function main(): Promise<void> {
   logger.info(`Para conectar ao Mercado Livre: http://localhost:${config.port}/oauth/ml/login`);
 
   startCatalogLoop();
+  startConversionLoop();
 }
 
 main().catch((err) => {

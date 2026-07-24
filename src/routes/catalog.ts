@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { getCatalogCompetition, refreshCatalogCompetition } from '../core/catalogCompetition';
+import { getConversion, refreshConversion } from '../core/conversion';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import { debugItemRaw, getUnansweredQuestions, MlQuestion } from '../ml/mlClient';
 
@@ -38,6 +39,24 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
     refreshCatalogCompetition().catch(() => undefined);
     reply.code(202);
     return { ok: true, mensagem: 'Varredura de catalogo iniciada' };
+  });
+
+  // Conversao (visitas x vendas), janelas de 30 e 7 dias. Serve o cache; ?refresh=1 força a varredura.
+  app.get('/api/conversion', async (req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado. Acesse /oauth/ml/login para conectar.' };
+    }
+    const { refresh } = req.query as { refresh?: string };
+    try {
+      if (refresh === '1') return await refreshConversion();
+      const cached = getConversion();
+      if (cached) return cached;
+      return await refreshConversion();
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro ao analisar conversao' };
+    }
   });
 
   // Perguntas SEM resposta (exige permissao de Perguntas no app do ML). Cache de 5 min; ?refresh=1 força.
