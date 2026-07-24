@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from '../config';
 import { logger } from '../logger';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
-import { getItemsAttributes, getPriceToWin, getSellerItemIds, getSellerNickname, MlItemAttributes, MlPriceToWin } from '../ml/mlClient';
+import { getItemRating, getItemsAttributes, getPriceToWin, getSellerItemIds, getSellerNickname, MlItemAttributes, MlPriceToWin } from '../ml/mlClient';
 
 /**
  * Analise de concorrencia de CATALOGO (Buy Box) dos anuncios do proprio seller no Mercado Livre.
@@ -42,6 +42,9 @@ export interface CatalogCompetitionView {
   visitShare?: string | number | null;
   vendidos?: number;
   disponivel?: number;
+  /** Nota media das avaliacoes (0-5) e total de avaliacoes do anuncio/produto. */
+  nota?: number | null;
+  totalAvaliacoes?: number | null;
   // --- Concorrente que esta ganhando o Buy Box (preenchido para os que estamos perdendo) ---
   vencedorItemId?: string | null;
   vencedorSellerId?: number | null;
@@ -256,9 +259,15 @@ async function doScan(): Promise<CatalogCompetitionResult> {
   for (const item of catalogItems) {
     try {
       const ptw = await getPriceToWin(item.id);
-      views.push(buildCompetitionView(item, ptw));
+      const view = buildCompetitionView(item, ptw);
+      const rating = await getItemRating(item.id).catch(() => null);
+      if (rating) {
+        view.nota = rating.ratingAverage;
+        view.totalAvaliacoes = rating.total;
+      }
+      views.push(view);
     } catch (err: any) {
-      logger.warn(`[CATALOGO] Falha no price_to_win do anuncio ${item.id}:`, err?.message || err);
+      logger.warn(`[CATALOGO] Falha ao analisar o anuncio ${item.id}:`, err?.message || err);
     }
     await sleep(200); // respeita a cota do ML sem correr risco de rajada
   }

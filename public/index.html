@@ -147,6 +147,8 @@ function baseListagens() { return (conversao && conversao.items) ? conversao.ite
 function totalAtivos() { return conversao ? conversao.totalAnalisados : itens().length; }
 function estoqueBaixo() { return baseListagens().filter(i => i.disponivel != null && i.disponivel <= estoqueLimite).slice().sort((a, b) => (a.disponivel || 0) - (b.disponivel || 0)); }
 function oportunidades() { return perdendoPreco().slice().sort((a, b) => (b.vendidos || 0) - (a.vendidos || 0)); }
+function notaBaixa() { return itens().filter(i => i.nota != null && i.nota < 4).slice().sort((a, b) => (a.nota || 0) - (b.nota || 0)); }
+function temNota() { return itens().some(i => i.nota != null); }
 
 function grupoAtual() {
   switch (filtro) {
@@ -159,10 +161,11 @@ function grupoAtual() {
     case 'estoque_baixo': return estoqueBaixo();
     case 'oportunidades': return oportunidades();
     case 'listagens': return baseListagens();
+    case 'nota_baixa': return notaBaixa();
     default: return itens();
   }
 }
-const rotulos = { todos: 'anúncios de catálogo', listagens: 'todos os anúncios ativos', perdendo: 'perdendo o Buy Box', perdendo_vantagem: 'perdendo por vantagem (frete/entrega)', perdendo_preco: 'perdendo por preço', ganhando: 'ganhando', empatado: 'empatado', estoque_baixo: 'estoque baixo', oportunidades: 'oportunidades de preço', perguntas: 'perguntas sem resposta', conversao: 'conversão (visitas × vendas)' };
+const rotulos = { todos: 'anúncios de catálogo', listagens: 'todos os anúncios ativos', perdendo: 'perdendo o Buy Box', perdendo_vantagem: 'perdendo por vantagem (frete/entrega)', perdendo_preco: 'perdendo por preço', ganhando: 'ganhando', empatado: 'empatado', estoque_baixo: 'estoque baixo', oportunidades: 'oportunidades de preço', perguntas: 'perguntas sem resposta', conversao: 'conversão (visitas × vendas)', nota_baixa: 'nota baixa (< 4,0)' };
 
 function setFiltro(f) { filtro = f; renderCards(); renderDetail(); document.getElementById('detailPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 
@@ -182,6 +185,7 @@ function renderCards() {
     kpi('oportunidades', 'Oportunidades de preço', oportunidades().length, oportunidades().length ? 'warn' : 'ok', 'perde por preço, vende bem') +
     kpi('estoque_baixo', 'Estoque baixo', estoqueBaixo().length, estoqueBaixo().length ? 'warn' : 'ok', '≤ ' + estoqueLimite + ' un. · todos') +
     kpi('perguntas', 'Perguntas pendentes', perguntas.length, perguntas.length ? 'warn' : 'ok', 'sem resposta') +
+    (temNota() ? kpi('nota_baixa', 'Nota baixa', notaBaixa().length, notaBaixa().length ? 'bad' : 'ok', 'avaliação < 4,0') : '') +
     cardConversao();
 }
 
@@ -238,6 +242,7 @@ function linhaAnuncio(i) {
       motivo = (i.naoEhPreco ? '<div class="muted" style="margin-bottom:4px">Não é preço — iguale:</div>' : '') + tags;
     } else { motivo = '<span class="muted">É preço — baixe para ganhar</span>'; }
   }
+  const nota = i.nota == null ? '—' : '<span style="color:' + (i.nota < 4 ? 'var(--red)' : 'var(--text)') + '">' + i.nota.toFixed(1).replace('.', ',') + ' ★</span>' + (i.totalAvaliacoes != null ? '<div class="muted">' + i.totalAvaliacoes + ' aval.</div>' : '');
   return '<tr>' +
     '<td><span class="tag ' + i.situacao + '">' + i.situacao + '</span></td>' +
     '<td class="title-cell">' + link + '<div class="muted">' + i.itemId + '</div></td>' +
@@ -246,6 +251,7 @@ function linhaAnuncio(i) {
     '<td class="num">' + diff + '</td>' +
     '<td class="motivo-cell">' + motivo + '</td>' +
     '<td>' + conc + '</td>' +
+    '<td class="num">' + nota + '</td>' +
     '<td class="num">' + (i.vendidos ?? '—') + '</td>' +
     '<td class="num">' + (i.disponivel ?? '—') + '</td>' +
     '</tr>';
@@ -269,7 +275,7 @@ function renderDetail() {
   body.innerHTML = '<table><thead><tr>' +
     '<th>Situação</th><th>Anúncio</th><th class="num">Preço atual</th><th class="num">Preço p/ ganhar</th>' +
     '<th class="num">Diferença</th><th>Por que está perdendo</th><th>Concorrente (vencedor)</th>' +
-    '<th class="num">Vendidos</th><th class="num">Estoque</th>' +
+    '<th class="num">Nota</th><th class="num">Vendidos</th><th class="num">Estoque</th>' +
     '</tr></thead><tbody>' + grupo.map(linhaAnuncio).join('') + '</tbody></table>';
 }
 
@@ -350,7 +356,7 @@ async function load(forcar) {
 
 function exportCsv() {
   if (!data) return;
-  const linhas = [['item_id', 'titulo', 'situacao', 'preco_atual', 'preco_para_ganhar', 'diferenca', 'diferenca_pct', 'por_que_perde', 'nao_eh_preco', 'concorrente_vendedor', 'concorrente_preco', 'concorrente_anuncio', 'vendidos', 'estoque', 'permalink']];
+  const linhas = [['item_id', 'titulo', 'situacao', 'preco_atual', 'preco_para_ganhar', 'diferenca', 'diferenca_pct', 'por_que_perde', 'nao_eh_preco', 'nota', 'total_avaliacoes', 'concorrente_vendedor', 'concorrente_preco', 'concorrente_anuncio', 'vendidos', 'estoque', 'permalink']];
   for (const i of data.items) linhas.push([
     i.itemId, i.title || '', i.situacao,
     i.precoAtual != null ? String(i.precoAtual).replace('.', ',') : '',
@@ -358,6 +364,7 @@ function exportCsv() {
     i.gap != null ? String(i.gap).replace('.', ',') : '',
     i.gapPercent != null ? String(i.gapPercent).replace('.', ',') : '',
     (i.motivosPerdendo || []).join(' + '), i.naoEhPreco ? 'sim' : '',
+    i.nota != null ? String(i.nota).replace('.', ',') : '', i.totalAvaliacoes ?? '',
     i.vencedorNickname || '', i.precoVencedor != null ? String(i.precoVencedor).replace('.', ',') : '', i.vencedorPermalink || '',
     i.vendidos ?? '', i.disponivel ?? '', i.permalink || '',
   ]);
