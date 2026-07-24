@@ -168,12 +168,23 @@ export async function getCatalogProduct(productId: string): Promise<any> {
   return mlRequest<any>(`/products/${productId}`);
 }
 
-/** Diagnostico: devolve as respostas CRUAS do ML pra um anuncio (atributos + price_to_win + produto). */
+/** Diagnostico: devolve as respostas CRUAS do ML pra um anuncio (atributos + price_to_win +
+ * produto + o anuncio do concorrente vencedor, pra confirmar se da pra pegar o vendedor dele). */
 export async function debugItemRaw(itemId: string): Promise<any> {
   const [attr] = await getItemsAttributes([itemId]);
-  const priceToWin = await getPriceToWin(itemId).catch((e) => ({ erro: String(e?.message || e) }));
+  const priceToWin: any = await getPriceToWin(itemId).catch((e) => ({ erro: String(e?.message || e) }));
   let product: any = null;
   const productId = attr?.catalog_product_id;
   if (productId) product = await getCatalogProduct(productId).catch((e) => ({ erro: String(e?.message || e) }));
-  return { itemId, catalogProductId: productId ?? null, attr: attr ?? null, priceToWin, product };
+
+  // Tenta buscar o anuncio do vencedor (item de OUTRO vendedor) — 2 formas, pra ver qual devolve
+  // seller_id/permalink na sua conta.
+  const winnerItemId = priceToWin?.winner?.item_id;
+  let winnerViaMultiget: any = null;
+  let winnerViaSingle: any = null;
+  if (winnerItemId) {
+    winnerViaMultiget = (await getItemsAttributes([winnerItemId]).catch((e) => [{ erro: String(e?.message || e) }]))[0] ?? null;
+    winnerViaSingle = await mlRequest<any>(`/items/${winnerItemId}`).catch((e) => ({ erro: String(e?.message || e) }));
+  }
+  return { itemId, catalogProductId: productId ?? null, attr: attr ?? null, priceToWin, product, winnerItemId: winnerItemId ?? null, winnerViaMultiget, winnerViaSingle };
 }

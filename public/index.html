@@ -160,11 +160,13 @@ function render() {
   tb.innerHTML = itens.map(i => {
     const diff = i.gap != null ? fmtMoney(i.gap) + (i.gapPercent != null ? ' <span class="muted">(' + i.gapPercent.toFixed(1) + '%)</span>' : '') : '—';
     const link = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + (i.title || i.itemId) + '</a>' : (i.title || i.itemId);
-    // Concorrente vencedor (só nos que estamos perdendo): nome do vendedor (link p/ o anúncio dele) + preço dele.
+    // Concorrente vencedor (só nos que estamos perdendo): nome do vendedor (se o ML expuser) e
+    // link para o anúncio dele — ou, à prova de falha, para a página do produto no catálogo.
     let conc = '—';
-    if (i.situacao === 'perdendo' && (i.vencedorNickname || i.precoVencedor != null || i.vencedorPermalink)) {
-      const nome = i.vencedorNickname || 'vendedor';
-      const nomeHtml = i.vencedorPermalink ? '<a href="' + i.vencedorPermalink + '" target="_blank" rel="noopener">' + nome + '</a>' : nome;
+    if (i.situacao === 'perdendo' && (i.vencedorNickname || i.precoVencedor != null || i.vencedorPermalink || i.catalogProductId)) {
+      const link = i.vencedorPermalink || (i.catalogProductId ? 'https://www.mercadolivre.com.br/p/' + i.catalogProductId : null);
+      const nome = i.vencedorNickname || 'ver anúncio vencedor';
+      const nomeHtml = link ? '<a href="' + link + '" target="_blank" rel="noopener">' + nome + '</a>' : nome;
       conc = nomeHtml + '<div class="muted">' + (i.precoVencedor != null ? fmtMoney(i.precoVencedor) : '') + '</div>';
     }
     return '<tr>' +
