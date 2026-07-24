@@ -31,7 +31,14 @@ export interface CatalogCompetitionView {
   precoVencedor?: number | null;
   /** Quanto o preco atual esta ACIMA do preco pra ganhar (so faz sentido quando perdendo). */
   gap?: number | null;
+  /** Percentual do SEU preco que precisaria ser cortado pra chegar no preco-alvo (gap / preco atual). */
   gapPercent?: number | null;
+  /** Vantagens que o vencedor tem e voce NAO (frete gratis, mesmo dia, Full...). Explica quando
+   * o "preco pra ganhar" vem irrealista: nao e questao de preco, e de frete/entrega. */
+  motivosPerdendo?: string[];
+  /** true quando o preco-alvo e irrealista (bem abaixo do preco do vencedor) — sinal de que a
+   * disputa NAO e de preco, e sim das vantagens acima. */
+  naoEhPreco?: boolean;
   visitShare?: string | number | null;
   vendidos?: number;
   disponivel?: number;
@@ -61,6 +68,20 @@ export function mapSituacao(statusMl: string | undefined): SituacaoBuyBox {
   }
 }
 
+/** Vantagens que o VENCEDOR tem e o nosso anuncio NAO (ex: frete gratis, envio no mesmo dia).
+ * Compara os boosts do vencedor (status 'boosted') com os nossos (qualquer coisa != 'boosted'). */
+export function motivosDePerda(ptw: MlPriceToWin): string[] {
+  const meusStatus = new Map<string, string>();
+  for (const b of ptw.boosts ?? []) meusStatus.set(b.id, b.status ?? '');
+  const out: string[] = [];
+  for (const wb of ptw.winner?.boosts ?? []) {
+    if (wb.status === 'boosted' && meusStatus.get(wb.id) !== 'boosted') {
+      out.push(wb.description || wb.id);
+    }
+  }
+  return out;
+}
+
 /** Monta a view de um anuncio a partir dos seus atributos + resposta do price_to_win. Pura (testavel). */
 export function buildCompetitionView(item: MlItemAttributes, ptw: MlPriceToWin): CatalogCompetitionView {
   const situacao = mapSituacao(ptw.status);
@@ -68,12 +89,20 @@ export function buildCompetitionView(item: MlItemAttributes, ptw: MlPriceToWin):
   const precoParaGanhar = ptw.price_to_win ?? null;
   const precoVencedor = ptw.winner?.price ?? null;
 
-  // Gap so e relevante quando estamos perdendo e temos os dois precos.
+  // Gap so e relevante quando estamos perdendo e temos os dois precos. O percentual e sobre o
+  // NOSSO preco atual (quanto do seu preco precisaria cortar) — evita o % explodir quando o
+  // preco-alvo vem irrealista (perto de zero).
   let gap: number | null = null;
   let gapPercent: number | null = null;
-  if (situacao === 'perdendo' && precoAtual != null && precoParaGanhar != null && precoParaGanhar > 0) {
+  let motivosPerdendo: string[] = [];
+  let naoEhPreco = false;
+  if (situacao === 'perdendo' && precoAtual != null && precoParaGanhar != null) {
     gap = round2(precoAtual - precoParaGanhar);
-    gapPercent = round2((gap / precoParaGanhar) * 100);
+    if (precoAtual > 0) gapPercent = round2((gap / precoAtual) * 100);
+    motivosPerdendo = motivosDePerda(ptw);
+    // Preco-alvo irrealista = bem abaixo do preco do vencedor (o ML pede um preco quase zero
+    // porque o vencedor ganha por vantagens, nao por preco).
+    if (precoVencedor != null && precoVencedor > 0 && precoParaGanhar < precoVencedor * 0.5) naoEhPreco = true;
   }
 
   return {
@@ -88,6 +117,8 @@ export function buildCompetitionView(item: MlItemAttributes, ptw: MlPriceToWin):
     precoVencedor,
     gap,
     gapPercent,
+    motivosPerdendo,
+    naoEhPreco,
     visitShare: ptw.visit_share ?? null,
     vendidos: item.sold_quantity,
     disponivel: item.available_quantity,

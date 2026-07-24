@@ -145,6 +145,14 @@ export async function getSellerNickname(sellerId: number): Promise<string | null
   }
 }
 
+/** Vantagem que ajuda a ganhar o Buy Box (frete gratis, Full, parcelamento, mesmo dia...).
+ * status: 'boosted' = o anuncio JA tem; 'opportunity' = NAO tem (poderia ganhar). */
+export interface MlBoost {
+  id: string;
+  status?: string;
+  description?: string;
+}
+
 export interface MlPriceToWin {
   item_id?: string;
   status?: string; // 'winning' | 'competing' | 'sharing_first_place' | 'listed' | ...
@@ -153,8 +161,9 @@ export interface MlPriceToWin {
   price_to_win?: number | null;
   competitors_sharing_first_place?: number;
   visit_share?: string | number | null;
-  boosts?: unknown;
-  winner?: { item_id?: string; price?: number | null; currency_id?: string; seller_id?: number } | null;
+  /** Vantagens do SEU anuncio (o que voce tem = boosted, o que falta = opportunity). */
+  boosts?: MlBoost[];
+  winner?: { item_id?: string; price?: number | null; currency_id?: string; seller_id?: number; boosts?: MlBoost[] } | null;
   reason?: unknown;
 }
 

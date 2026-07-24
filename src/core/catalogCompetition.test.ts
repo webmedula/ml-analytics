@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCompetitionView, mapSituacao, sortCompetitionViews } from './catalogCompetition';
+import { buildCompetitionView, mapSituacao, motivosDePerda, sortCompetitionViews } from './catalogCompetition';
 import type { MlItemAttributes, MlPriceToWin } from '../ml/mlClient';
 
 function item(over: Partial<MlItemAttributes> = {}): MlItemAttributes {
@@ -18,13 +18,20 @@ describe('mapSituacao', () => {
 });
 
 describe('buildCompetitionView — calculo do gap', () => {
-  it('perdendo: calcula gap e percentual em relacao ao preco pra ganhar', () => {
+  it('perdendo: gap e percentual (sobre o proprio preco atual)', () => {
     const ptw: MlPriceToWin = { status: 'competing', current_price: 120, price_to_win: 100, winner: { price: 100 } };
     const v = buildCompetitionView(item(), ptw);
     expect(v.situacao).toBe('perdendo');
     expect(v.gap).toBe(20);
-    expect(v.gapPercent).toBe(20);
+    expect(v.gapPercent).toBe(16.67); // 20 / 120
     expect(v.precoVencedor).toBe(100);
+    expect(v.naoEhPreco).toBe(false);
+  });
+
+  it('preco-alvo irrealista (bem abaixo do vencedor) marca naoEhPreco', () => {
+    const ptw: MlPriceToWin = { status: 'competing', current_price: 23.5, price_to_win: 0.73, winner: { price: 22.99 } };
+    const v = buildCompetitionView(item(), ptw);
+    expect(v.naoEhPreco).toBe(true);
   });
 
   it('ganhando: nao calcula gap (fica null)', () => {
@@ -57,6 +64,33 @@ describe('buildCompetitionView — calculo do gap', () => {
     expect(v.vencedorItemId).toBe('MLB999');
     expect(v.vencedorSellerId).toBe(555);
     expect(v.precoVencedor).toBe(98);
+  });
+});
+
+describe('motivosDePerda — vantagens que o vencedor tem e voce nao', () => {
+  it('lista os boosts que o vencedor tem (boosted) e o seu anuncio nao', () => {
+    const ptw: MlPriceToWin = {
+      status: 'competing',
+      boosts: [
+        { id: 'free_shipping', status: 'opportunity', description: 'Frete grátis' },
+        { id: 'shipping_collect', status: 'boosted', description: 'Envios com coleta' },
+        { id: 'same_day_shipping', status: 'opportunity', description: 'Envios no mesmo dia' },
+      ],
+      winner: {
+        price: 22.99,
+        boosts: [
+          { id: 'free_shipping', status: 'boosted', description: 'Frete grátis' },
+          { id: 'shipping_collect', status: 'boosted', description: 'Envios com coleta' },
+          { id: 'same_day_shipping', status: 'boosted', description: 'Envios no mesmo dia' },
+        ],
+      },
+    };
+    // free_shipping e same_day: vencedor tem, voce nao. shipping_collect: os dois tem -> nao entra.
+    expect(motivosDePerda(ptw)).toEqual(['Frete grátis', 'Envios no mesmo dia']);
+  });
+
+  it('sem boosts do vencedor: nenhum motivo (disputa e de preco)', () => {
+    expect(motivosDePerda({ status: 'competing', winner: { price: 10 } })).toEqual([]);
   });
 });
 

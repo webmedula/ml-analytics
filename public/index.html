@@ -38,7 +38,9 @@
   .tag.ganhando { background: rgba(34,197,94,.15); color: var(--green); }
   .tag.empatado { background: rgba(234,179,8,.15); color: var(--yellow); }
   .tag.indefinido { background: var(--panel-2); color: var(--text-dim); }
+  .tag.motivo { background: rgba(59,130,246,.15); color: var(--accent); margin: 0 3px 3px 0; display: inline-block; }
   .title-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .motivo-cell { max-width: 220px; }
   .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
   .dot.on { background: var(--green); } .dot.off { background: var(--red); }
 </style>
@@ -90,7 +92,7 @@
       <thead><tr>
         <th>Situação</th><th>Anúncio</th>
         <th class="num">Preço atual</th><th class="num">Preço p/ ganhar</th>
-        <th class="num">Diferença</th><th>Concorrente (vencedor)</th>
+        <th class="num">Diferença</th><th>Por que está perdendo</th><th>Concorrente (vencedor)</th>
         <th class="num">Vendidos</th><th class="num">Estoque</th>
       </tr></thead>
       <tbody id="tbody"></tbody>
@@ -164,17 +166,28 @@ function render() {
     // link para o anúncio dele — ou, à prova de falha, para a página do produto no catálogo.
     let conc = '—';
     if (i.situacao === 'perdendo' && (i.vencedorNickname || i.precoVencedor != null || i.vencedorPermalink || i.catalogProductId)) {
-      const link = i.vencedorPermalink || (i.catalogProductId ? 'https://www.mercadolivre.com.br/p/' + i.catalogProductId : null);
+      const clink = i.vencedorPermalink || (i.catalogProductId ? 'https://www.mercadolivre.com.br/p/' + i.catalogProductId : null);
       const nome = i.vencedorNickname || 'ver anúncio vencedor';
-      const nomeHtml = link ? '<a href="' + link + '" target="_blank" rel="noopener">' + nome + '</a>' : nome;
+      const nomeHtml = clink ? '<a href="' + clink + '" target="_blank" rel="noopener">' + nome + '</a>' : nome;
       conc = nomeHtml + '<div class="muted">' + (i.precoVencedor != null ? fmtMoney(i.precoVencedor) : '') + '</div>';
+    }
+    // Por que está perdendo: vantagens que o vencedor tem e você não (boosts). Se não houver, é preço.
+    let motivo = '—';
+    if (i.situacao === 'perdendo') {
+      if (i.motivosPerdendo && i.motivosPerdendo.length) {
+        const tags = i.motivosPerdendo.map(m => '<span class="tag motivo">' + m + '</span>').join('');
+        motivo = (i.naoEhPreco ? '<div class="muted" style="margin-bottom:4px">Não é preço — iguale:</div>' : '') + tags;
+      } else {
+        motivo = '<span class="muted">É preço — baixe para ganhar</span>';
+      }
     }
     return '<tr>' +
       '<td><span class="tag ' + i.situacao + '">' + i.situacao + '</span></td>' +
       '<td class="title-cell">' + link + '<div class="muted">' + i.itemId + '</div></td>' +
       '<td class="num">' + fmtMoney(i.precoAtual) + '</td>' +
-      '<td class="num">' + fmtMoney(i.precoParaGanhar) + '</td>' +
+      '<td class="num">' + (i.naoEhPreco ? '<span class="muted">' + fmtMoney(i.precoParaGanhar) + '</span>' : fmtMoney(i.precoParaGanhar)) + '</td>' +
       '<td class="num">' + diff + '</td>' +
+      '<td class="motivo-cell">' + motivo + '</td>' +
       '<td>' + conc + '</td>' +
       '<td class="num">' + (i.vendidos ?? '—') + '</td>' +
       '<td class="num">' + (i.disponivel ?? '—') + '</td>' +
@@ -191,7 +204,9 @@ function render() {
 
   document.getElementById('obs').innerHTML =
     (data.truncado ? '⚠️ A varredura atingiu o teto de anúncios — pode haver mais não analisados (ajuste CATALOG_SCAN_MAX_ITEMS). ' : '') +
-    'Perdendo = outro vendedor está ganhando a página do produto; "Preço p/ ganhar" é o valor sugerido pelo Mercado Livre para reassumir o Buy Box.';
+    'Perdendo = outro vendedor está ganhando a página. "Preço p/ ganhar" = valor sugerido pelo ML para reassumir o Buy Box. ' +
+    '"Diferença" = quanto (R$ e % do seu preço) você teria que cortar. "Por que está perdendo": quando aparece "Não é preço", ' +
+    'o concorrente ganha pelas vantagens listadas (frete grátis, Full, mesmo dia, parcelamento) — baixar o preço não resolve, iguale essas vantagens.';
 }
 
 async function load(forcar) {
@@ -221,13 +236,15 @@ async function load(forcar) {
 
 function exportCsv() {
   if (!data) return;
-  const linhas = [['item_id', 'titulo', 'situacao', 'preco_atual', 'preco_para_ganhar', 'diferenca', 'diferenca_pct', 'concorrente_vendedor', 'concorrente_preco', 'concorrente_anuncio', 'vendidos', 'estoque', 'permalink']];
+  const linhas = [['item_id', 'titulo', 'situacao', 'preco_atual', 'preco_para_ganhar', 'diferenca', 'diferenca_pct', 'por_que_perde', 'nao_eh_preco', 'concorrente_vendedor', 'concorrente_preco', 'concorrente_anuncio', 'vendidos', 'estoque', 'permalink']];
   for (const i of data.items) linhas.push([
     i.itemId, i.title || '', i.situacao,
     i.precoAtual != null ? String(i.precoAtual).replace('.', ',') : '',
     i.precoParaGanhar != null ? String(i.precoParaGanhar).replace('.', ',') : '',
     i.gap != null ? String(i.gap).replace('.', ',') : '',
     i.gapPercent != null ? String(i.gapPercent).replace('.', ',') : '',
+    (i.motivosPerdendo || []).join(' + '),
+    i.naoEhPreco ? 'sim' : '',
     i.vencedorNickname || '',
     i.precoVencedor != null ? String(i.precoVencedor).replace('.', ',') : '',
     i.vencedorPermalink || '',
