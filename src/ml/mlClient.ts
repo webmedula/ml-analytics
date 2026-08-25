@@ -297,6 +297,101 @@ export async function getSoldUnitsByItem(dias = 30): Promise<Map<string, { total
   return out;
 }
 
+/**
+ * DIAGNOSTICO: sale_fee e por UNIDADE ou pela LINHA inteira?
+ *
+ * Um pedido de quantidade 1 nao distingue as duas leituras. Mas a razao denuncia:
+ *   por unidade -> sale_fee / unit_price fica constante em qualquer quantidade
+ *   pela linha  -> sale_fee / (unit_price * quantidade) e que fica constante
+ *
+ * Varre os pedidos recentes, separa por quantidade e devolve as duas razoes. Se o calculo estiver
+ * errado, o liquido erra por um fator igual a quantidade — e passa despercebido justamente porque
+ * a maioria dos pedidos tem quantidade 1.
+ */
+export async function diagnosticarSaleFee(dias = 90): Promise<any> {
+  const sellerId = await getMlUserId();
+  const fromIso = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+
+  const linhas: Array<{ pedido: string; item: string; qtd: number; unit: number; fee: number; sobreUnit: number; sobreLinha: number }> = [];
+  const limit = 50;
+  let offset = 0;
+
+  for (;;) {
+    const data = await mlRequest<{ results?: any[]; paging?: { total?: number } }>(
+      `/orders/search?seller=${sellerId}&order.date_created.from=${encodeURIComponent(fromIso)}&sort=date_desc&limit=${limit}&offset=${offset}`,
+    );
+    const orders = data.results || [];
+    for (const o of orders) {
+      if (String(o.status) === 'cancelled') continue;
+      for (const it of o.order_items || []) {
+        const qtd = Number(it.quantity ?? 0);
+        const unit = Number(it.unit_price ?? 0);
+        const fee = Number(it.sale_fee ?? NaN);
+        if (!qtd || !unit || !Number.isFinite(fee)) continue;
+        linhas.push({
+          pedido: String(o.id),
+          item: it?.item?.id,
+          qtd,
+          unit: Math.round(unit * 100) / 100,
+          fee: Math.round(fee * 100) / 100,
+          sobreUnit: Math.round((fee / unit) * 10000) / 100,
+          sobreLinha: Math.round((fee / (unit * qtd)) * 10000) / 100,
+        });
+      }
+    }
+    offset += limit;
+    const total = data.paging?.total ?? linhas.length;
+    if (orders.length === 0 || offset >= total || offset >= 2000) break;
+  }
+
+  const porQtd = new Map<number, { n: number; somaSobreUnit: number; somaSobreLinha: number }>();
+  for (const l of linhas) {
+    const cur = porQtd.get(l.qtd) || { n: 0, somaSobreUnit: 0, somaSobreLinha: 0 };
+    cur.n++;
+    cur.somaSobreUnit += l.sobreUnit;
+    cur.somaSobreLinha += l.sobreLinha;
+    porQtd.set(l.qtd, cur);
+  }
+
+  const resumo = Array.from(porQtd.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([qtd, v]) => ({
+      quantidade: qtd,
+      linhas: v.n,
+      mediaFeeSobreUnitPrice: Math.round((v.somaSobreUnit / v.n) * 100) / 100 + '%',
+      mediaFeeSobreLinhaToda: Math.round((v.somaSobreLinha / v.n) * 100) / 100 + '%',
+    }));
+
+  const comQtdMaior = linhas.filter((l) => l.qtd > 1);
+  let veredicto: string;
+  if (comQtdMaior.length === 0) {
+    veredicto = `Nenhum pedido com quantidade > 1 nos ultimos ${dias} dias. Sem isso NAO da pra decidir — o calculo segue assumindo "por unidade".`;
+  } else {
+    const q1 = porQtd.get(1);
+    const mediaQ1 = q1 ? q1.somaSobreUnit / q1.n : null;
+    const mediaMaiorSobreUnit = comQtdMaior.reduce((t, l) => t + l.sobreUnit, 0) / comQtdMaior.length;
+    const mediaMaiorSobreLinha = comQtdMaior.reduce((t, l) => t + l.sobreLinha, 0) / comQtdMaior.length;
+    if (mediaQ1 == null) {
+      veredicto = 'Sem pedidos de quantidade 1 para comparar.';
+    } else {
+      const difUnit = Math.abs(mediaMaiorSobreUnit - mediaQ1);
+      const difLinha = Math.abs(mediaMaiorSobreLinha - mediaQ1);
+      veredicto = difUnit < difLinha
+        ? `POR UNIDADE. Em quantidade >1, fee/unit_price (${mediaMaiorSobreUnit.toFixed(2)}%) ficou proximo do padrao de quantidade 1 (${mediaQ1.toFixed(2)}%). O calculo atual (fee x quantidade) esta certo.`
+        : `PELA LINHA INTEIRA. Em quantidade >1, fee/(unit x qtd) (${mediaMaiorSobreLinha.toFixed(2)}%) ficou proximo do padrao de quantidade 1 (${mediaQ1.toFixed(2)}%). O calculo atual SUPERESTIMA a comissao — precisa parar de multiplicar pela quantidade.`;
+    }
+  }
+
+  return {
+    veredicto,
+    periodoDias: dias,
+    linhasAnalisadas: linhas.length,
+    linhasComQuantidadeMaiorQue1: comQtdMaior.length,
+    porQuantidade: resumo,
+    exemplosComQuantidadeMaiorQue1: comQtdMaior.slice(0, 10),
+  };
+}
+
 /** Pedido mais recente, cru — pra conferir o significado de sale_fee contra um dado real. */
 export async function getUltimoPedidoBruto(): Promise<any> {
   const sellerId = await getMlUserId();

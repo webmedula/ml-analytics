@@ -3,7 +3,7 @@ import { getCatalogCompetition, refreshCatalogCompetition } from '../core/catalo
 import { getConversion, refreshConversion } from '../core/conversion';
 import { getListingRatings, refreshListingRatings } from '../core/listingRatings';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
-import { debugItemRaw, getUltimoPedidoBruto, getUnansweredQuestions, MlQuestion } from '../ml/mlClient';
+import { debugItemRaw, diagnosticarSaleFee, getUltimoPedidoBruto, getUnansweredQuestions, MlQuestion } from '../ml/mlClient';
 
 // Cache leve das perguntas (mudam com frequencia, mas nao a cada request): 5 min.
 let perguntasCache: { total: number; questions: MlQuestion[] } | null = null;
@@ -133,6 +133,21 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao ler o pedido' };
+    }
+  });
+
+  /** Decide, com os pedidos reais da conta, se sale_fee e por unidade ou pela linha inteira. */
+  app.get('/debug/sale-fee', async (req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado.' };
+    }
+    const { dias } = req.query as { dias?: string };
+    try {
+      return await diagnosticarSaleFee(Math.min(365, Math.max(1, Number(dias) || 90)));
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro no diagnostico de comissao' };
     }
   });
 
