@@ -5,7 +5,7 @@ const dataDir = process.env.DATA_DIR || './data';
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v17 (2026-08-25)',
+  appVersion: 'analytics v19 (2026-08-25)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -33,6 +33,22 @@ export const config = {
   /** Minimo de opinioes pra levar a nota a serio (evita agir por causa de 1 review ruim). */
   ratingsMinReviews: Number(process.env.RATINGS_MIN_REVIEWS || 3),
 
+  // --- Tiny (API v3, OAuth2) ---
+  // APLICATIVO PROPRIO deste servico, separado do que o tiny-pedidos-nf usa: se o Tiny invalidar
+  // o refresh token anterior a cada renovacao, servicos compartilhando o app se derrubam — e um
+  // deles emite nota fiscal.
+  tinyClientId: process.env.TINY_CLIENT_ID || '',
+  tinyClientSecret: process.env.TINY_CLIENT_SECRET || '',
+  tinyRedirectUri: process.env.TINY_REDIRECT_URI || 'http://localhost:3010/oauth/tiny/callback',
+  /** URLs configuraveis: nao consegui confirmar na documentacao (o Tiny bloqueia leitura
+   * automatizada). Se o portal do Tiny mostrar endereços diferentes, ajuste por variavel. */
+  tinyAuthUrl: process.env.TINY_AUTH_URL || 'https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect/auth',
+  tinyTokenUrl: process.env.TINY_TOKEN_URL || 'https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect/token',
+  tinyApiBaseUrl: (process.env.TINY_API_BASE_URL || 'https://api.tiny.com.br/public-api/v3').replace(/\/+$/, ''),
+  /** Por quanto tempo o custo lido do Tiny e considerado valido. Custo muda pouco; cada consulta
+   * e uma chamada ao ERP, e menos renovacao de token = menos risco de conflito. */
+  custosValidadeHoras: Number(process.env.CUSTOS_VALIDADE_HORAS || 24),
+
   // --- serie diaria (historico) ---
   /** Quantos dias de historico manter. 400 cobre um ano e a comparacao com o mesmo mes anterior. */
   historyRetencaoDias: Number(process.env.HISTORY_RETENCAO_DIAS || 400),
@@ -55,4 +71,6 @@ export const config = {
   conversionCachePath: path.join(dataDir, 'conversion-cache.json'),
   ratingsCachePath: path.join(dataDir, 'listing-ratings-cache.json'),
   historyDir: path.join(dataDir, 'history'),
+  tinyTokenStorePath: path.join(dataDir, 'tiny-token.json'),
+  custosCachePath: path.join(dataDir, 'custos.json'),
 };

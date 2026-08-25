@@ -5,7 +5,14 @@ import { getListingRatings, refreshListingRatings } from '../core/listingRatings
 import { datasDisponiveis, serieDoAnuncio, variacao, vendasPorDia } from '../core/history';
 import { calcularReposicao } from '../core/replenishmentScan';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
-import { debugItemRaw, diagnosticarSaleFee, getUltimoPedidoBruto, getUnansweredQuestions, MlQuestion } from '../ml/mlClient';
+import {
+  debugItemRaw,
+  diagnosticarSaleFee,
+  getUltimoPedidoBruto,
+  getUnansweredQuestions,
+  MlQuestion,
+  sondarPublicidade,
+} from '../ml/mlClient';
 
 // Cache leve das perguntas (mudam com frequencia, mas nao a cada request): 5 min.
 let perguntasCache: { total: number; questions: MlQuestion[] } | null = null;
@@ -180,6 +187,20 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao ler o pedido' };
+    }
+  });
+
+  /** Descobre quais rotas de publicidade respondem NESTA conta, antes de construir em cima delas. */
+  app.get('/debug/ads', async (_req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado.' };
+    }
+    try {
+      return await sondarPublicidade();
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro na sonda de publicidade' };
     }
   });
 

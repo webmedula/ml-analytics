@@ -442,6 +442,64 @@ export async function getShipmentCost(shipmentId: string): Promise<number | null
   }
 }
 
+/**
+ * SONDA DE PUBLICIDADE.
+ *
+ * Nao consegui ler a documentacao de Product Ads (o ML bloqueia o acesso automatizado), entao em
+ * vez de adivinhar endpoints, bate nas rotas conhecidas e relata o que a SUA conta responde. Mesmo
+ * metodo que resolveu a questao das opinioes.
+ *
+ * Um 403 aqui geralmente nao e falta de permissao no app, e sim TOKEN ANTIGO: o token carrega os
+ * escopos do momento em que foi emitido. Mudar a permissao no app nao atualiza um token ja
+ * existente — tem que reconectar.
+ */
+export async function sondarPublicidade(): Promise<any> {
+  const sellerId = await getMlUserId().catch(() => null);
+
+  const rotas = [
+    '/advertising/advertisers?product_id=PADS',
+    '/advertising/product_ads/campaigns/search',
+    '/advertising/product_ads/ads/search',
+    sellerId ? `/advertising/product_ads/seller/${sellerId}/campaigns` : null,
+    sellerId ? `/users/${sellerId}/item_ads` : null,
+    '/advertising/campaigns',
+  ].filter(Boolean) as string[];
+
+  const resultados: any[] = [];
+  for (const rota of rotas) {
+    try {
+      const corpo = await mlRequest<any>(rota, { 'Api-Version': '1' });
+      const texto = JSON.stringify(corpo);
+      resultados.push({
+        rota,
+        ok: true,
+        // So o comeco: o objetivo e descobrir o FORMATO, nao despejar a resposta inteira.
+        amostra: texto.length > 1200 ? texto.slice(0, 1200) + '...(cortado)' : corpo,
+        chavesDoTopo: corpo && typeof corpo === 'object' ? Object.keys(corpo).slice(0, 20) : null,
+      });
+    } catch (err: any) {
+      resultados.push({ rota, ok: false, status: err?.status ?? null, erro: String(err?.message || err) });
+    }
+    await sleep(120);
+  }
+
+  const funcionou = resultados.filter((r) => r.ok);
+  const negados = resultados.filter((r) => r.status === 403 || r.status === 401);
+
+  let diagnostico: string;
+  if (funcionou.length > 0) {
+    diagnostico = `${funcionou.length} rota(s) responderam. Da pra construir a analise de publicidade em cima delas.`;
+  } else if (negados.length > 0) {
+    diagnostico =
+      'Todas negaram acesso. Quase sempre e o TOKEN, nao o app: o token guarda os escopos de quando foi ' +
+      'emitido. Reconecte em /oauth/ml/login e rode de novo.';
+  } else {
+    diagnostico = 'Nenhuma rota conhecida respondeu. Pode ser que a conta nao tenha campanhas ativas, ou que os caminhos tenham mudado.';
+  }
+
+  return { diagnostico, sellerId, resultados };
+}
+
 /** Pedido mais recente, cru — pra conferir o significado de sale_fee contra um dado real. */
 export async function getUltimoPedidoBruto(): Promise<any> {
   const sellerId = await getMlUserId();
