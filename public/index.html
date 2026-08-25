@@ -55,6 +55,18 @@
   input.mini { padding: 7px 10px; border-radius: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); font-size: 13px; width: 70px; }
   .qrow { padding: 11px 2px; border-bottom: 1px solid var(--border); }
   .qrow .qtext { font-size: 14px; margin-bottom: 3px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+  .tab { background: transparent; color: var(--text-dim); border: none; border-bottom: 2px solid transparent;
+         border-radius: 0; padding: 10px 18px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .tab:hover { background: transparent; color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tag.rompido { background: rgba(239,68,68,.2); color: #ff9b9b; }
+  .tag.critico { background: rgba(239,68,68,.15); color: var(--red); }
+  .tag.atencao { background: rgba(234,179,8,.15); color: var(--yellow); }
+  .tag.ok { background: rgba(34,197,94,.15); color: var(--green); }
+  .tag.parado { background: var(--panel-2); color: var(--text-dim); }
+  .delta-up { color: var(--green); } .delta-down { color: var(--red); }
+  .spark { vertical-align: middle; }
 </style>
 </head>
 <body>
@@ -71,6 +83,12 @@
 </header>
 
 <main>
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-aba="hoje" onclick="setAba('hoje')">Hoje</button>
+    <button class="tab" data-aba="desempenho" onclick="setAba('desempenho')">Desempenho</button>
+    <button class="tab" data-aba="reposicao" onclick="setAba('reposicao')">Reposição</button>
+  </div>
+
   <section class="panel" id="keyPanel" style="display:none">
     <h2>Chave de acesso</h2>
     <p class="muted">Este serviço está protegido por uma chave (<code>SERVICE_API_KEY</code>). Cole a chave abaixo para liberar as análises. Ela fica guardada só neste navegador.</p>
@@ -103,6 +121,22 @@
     </div>
     <div id="detailBody"></div>
   </section>
+
+  <section class="panel aba-desempenho" style="display:none">
+    <div class="detail-head">
+      <h2 style="margin:0">Desempenho por anúncio</h2>
+      <div class="row" id="desempenhoControls"></div>
+    </div>
+    <div id="desempenhoBody"></div>
+  </section>
+
+  <section class="panel aba-reposicao" style="display:none">
+    <div class="detail-head">
+      <h2 style="margin:0">O que comprar</h2>
+      <div class="row" id="reposicaoControls"></div>
+    </div>
+    <div id="reposicaoBody"></div>
+  </section>
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -115,6 +149,10 @@ let janelaConv = '30';  // janela da conversao exibida: '30' ou '7'
 let filtro = 'perdendo';
 let estoqueLimite = 5;
 let chart = null;
+let reposicao = null;    // resultado do /api/replenishment
+let historico = null;    // quantos dias de serie ja existem
+let aba = 'hoje';
+const seriesCache = {};  // itemId -> serie diaria, carregada sob demanda
 
 function apiKey() { return localStorage.getItem('tiny_api_key') || ''; }
 async function api(path) {
@@ -126,6 +164,43 @@ async function api(path) {
   return d;
 }
 function fmtMoney(n) { return n == null ? '—' : 'R$ ' + Number(n).toFixed(2).replace('.', ','); }
+
+function setAba(nova) {
+  aba = nova;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.aba === nova));
+  document.getElementById('visaoPanel').style.display = nova === 'hoje' ? '' : 'none';
+  document.getElementById('detailPanel').style.display = nova === 'hoje' ? '' : 'none';
+  document.querySelector('.aba-desempenho').style.display = nova === 'desempenho' ? '' : 'none';
+  document.querySelector('.aba-reposicao').style.display = nova === 'reposicao' ? '' : 'none';
+  if (nova === 'desempenho') renderDesempenho();
+  if (nova === 'reposicao') renderReposicao();
+}
+
+/** Variação percentual, com o mesmo cuidado do backend: sair do zero não vira "+infinito%". */
+function delta(atual, anterior) {
+  if (anterior === 0) return atual === 0 ? 0 : null;
+  return Math.round(((atual - anterior) / Math.abs(anterior)) * 1000) / 10;
+}
+
+function fmtDelta(d) {
+  if (d == null) return '<span class="muted">—</span>';
+  const cls = d > 0 ? 'delta-up' : (d < 0 ? 'delta-down' : 'muted');
+  const sinal = d > 0 ? '+' : '';
+  return '<span class="' + cls + '">' + sinal + d.toFixed(1).replace('.', ',') + '%</span>';
+}
+
+/** Mini-gráfico em SVG puro — sem biblioteca, sem requisição extra. */
+function sparkline(valores, largura, altura) {
+  largura = largura || 90; altura = altura || 24;
+  if (!valores || valores.length < 2) return '<span class="muted">—</span>';
+  const max = Math.max(...valores, 1);
+  const passo = largura / (valores.length - 1);
+  const pontos = valores.map((v, i) => (i * passo).toFixed(1) + ',' + (altura - (v / max) * (altura - 2)).toFixed(1)).join(' ');
+  const ultimo = valores[valores.length - 1];
+  const cor = ultimo >= (valores[0] || 0) ? 'var(--green)' : 'var(--red)';
+  return '<svg class="spark" width="' + largura + '" height="' + altura + '" viewBox="0 0 ' + largura + ' ' + altura + '">' +
+    '<polyline fill="none" stroke="' + cor + '" stroke-width="1.5" points="' + pontos + '" /></svg>';
+}
 function fmtHora(iso) { try { return new Date(iso).toLocaleString('pt-BR'); } catch (e) { return iso; } }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -425,6 +500,123 @@ function renderConversao() {
     '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
+// --- aba DESEMPENHO ---
+function renderDesempenho() {
+  const el = document.getElementById('desempenhoBody');
+  const ctl = document.getElementById('desempenhoControls');
+  if (!conversao || !conversao.items || !conversao.items.length) {
+    el.innerHTML = '<div class="muted" style="padding:16px 0;text-align:center">Sem dados ainda — a varredura roda em background após conectar.</div>';
+    return;
+  }
+
+  ctl.innerHTML = historico && historico.dias > 0
+    ? '<span class="muted">' + historico.dias + ' dia(s) de histórico gravado</span>'
+    : '<span class="muted">histórico começa a ser gravado na próxima varredura</span>';
+
+  // Ritmo: quanto o anúncio está rendendo POR DIA nos últimos 7 contra a média dos 30.
+  // Não depende de histórico gravado — sai direto das duas janelas que já temos.
+  const lista = conversao.items.map(i => {
+    const porDia30 = i.liquido30 / 30;
+    const porDia7 = i.liquido7 / 7;
+    return { i, porDia30, porDia7, ritmo: delta(porDia7, porDia30) };
+  }).sort((a, b) => b.i.liquido30 - a.i.liquido30);
+
+  const totalLiq = lista.reduce((t, l) => t + l.i.liquido30, 0);
+  let acumulado = 0;
+
+  const rows = lista.map(l => {
+    const i = l.i;
+    acumulado += i.liquido30;
+    const share = totalLiq > 0 ? (acumulado / totalLiq) * 100 : 0;
+    const nome = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.title || i.itemId) + '</a>' : esc(i.title || i.itemId);
+    const serie = seriesCache[i.itemId];
+    const spark = serie ? sparkline(serie.map(d => d.liquido)) : '<button class="secondary" style="padding:3px 8px;font-size:11px" onclick="carregarSerie(\'' + i.itemId + '\')">ver</button>';
+    return '<tr>' +
+      '<td class="title-cell">' + nome + '<div class="muted">' + i.itemId + '</div></td>' +
+      '<td class="num"><b>' + fmtMoney(i.liquido30) + '</b><div class="muted">' + share.toFixed(0) + '% acum.</div></td>' +
+      '<td class="num">' + fmtMoney(i.liquido7) + '</td>' +
+      '<td class="num">' + fmtDelta(l.ritmo) + '<div class="muted">7d vs 30d</div></td>' +
+      '<td class="num">' + spark + '</td>' +
+      '<td class="num">' + i.visitas30 + '</td>' +
+      '<td class="num">' + (i.conversao30 == null ? '<span class="muted">—</span>' : i.conversao30.toFixed(1).replace('.', ',') + '%') + '</td>' +
+      '<td class="num">' + fmtMoney(i.ticketLiquido30) + '</td>' +
+      '</tr>';
+  }).join('');
+
+  // Quantos anúncios fazem 80% do resultado — a pergunta "o que realmente importa aqui".
+  let n80 = 0, soma = 0;
+  for (const l of lista) { soma += l.i.liquido30; n80++; if (totalLiq > 0 && soma >= totalLiq * 0.8) break; }
+
+  el.innerHTML = '<div class="insight" style="margin-bottom:12px">' +
+      '<b>' + n80 + '</b> de ' + lista.length + ' anúncios fazem 80% do seu líquido em 30 dias. ' +
+      '<span class="muted">A coluna "ritmo" compara o que o anúncio rende por dia na última semana com a média do mês: ' +
+      'negativo é desaceleração, mesmo que o total do mês ainda pareça bom.</span>' +
+    '</div>' +
+    '<table><thead><tr><th>Anúncio</th><th class="num">Líquido 30d</th><th class="num">Líquido 7d</th>' +
+    '<th class="num">Ritmo</th><th class="num">30 dias</th><th class="num">Visitas</th>' +
+    '<th class="num">Conv.</th><th class="num">Ticket</th></tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+async function carregarSerie(itemId) {
+  try {
+    const d = await api('/api/history/' + encodeURIComponent(itemId) + '?dias=30');
+    seriesCache[itemId] = d.porDia || [];
+    renderDesempenho();
+  } catch (e) {
+    seriesCache[itemId] = [];
+    renderDesempenho();
+  }
+}
+
+// --- aba REPOSIÇÃO ---
+function renderReposicao() {
+  const el = document.getElementById('reposicaoBody');
+  const ctl = document.getElementById('reposicaoControls');
+  if (!reposicao) {
+    el.innerHTML = '<div class="muted" style="padding:16px 0;text-align:center">Sem dados de venda ainda.</div>';
+    return;
+  }
+  const p = reposicao.parametros;
+  ctl.innerHTML = '<span class="muted">entrega ' + p.prazoEntregaDias + 'd · pedido a cada ' + p.cicloCompraDias + 'd</span>';
+
+  const r = reposicao.resumo;
+  const agir = reposicao.items.filter(l => l.sugestao.comprar > 0);
+
+  const rows = agir.map(l => {
+    const s = l.sugestao;
+    const nome = l.permalink ? '<a href="' + l.permalink + '" target="_blank" rel="noopener">' + esc(l.title || l.itemId) + '</a>' : esc(l.title || l.itemId);
+    const aprox = l.velocidadeAproximada ? ' <span class="tag motivo">estimado</span>' : '';
+    return '<tr>' +
+      '<td class="title-cell">' + nome + '<div class="muted">' + l.itemId + '</div></td>' +
+      '<td><span class="tag ' + s.urgencia + '">' + s.urgencia + '</span>' + aprox + '</td>' +
+      '<td class="num">' + l.estoque + '</td>' +
+      '<td class="num">' + s.velocidade.toFixed(2).replace('.', ',') + '<div class="muted">un./dia</div></td>' +
+      '<td class="num">' + (s.coberturaDias == null ? '—' : s.coberturaDias + ' d') + '</td>' +
+      '<td class="num"><b>' + s.comprar + '</b></td>' +
+      '<td class="muted evid">' + esc(s.explicacao) + '</td>' +
+      '</tr>';
+  }).join('');
+
+  const semHistorico = reposicao.totalAnalisados - reposicao.comHistorico;
+  el.innerHTML = '<div class="insight" style="margin-bottom:12px">' +
+      '<b>' + r.rompido + '</b> sem estoque · <b>' + r.critico + '</b> vão romper antes de a compra chegar · ' +
+      '<b>' + r.atencao + '</b> no ponto de compra.' +
+      (reposicao.investimentoEstimado != null
+        ? '<br>Comprar tudo custaria cerca de <b>' + fmtMoney(reposicao.investimentoEstimado) + '</b> ' +
+          '<span class="muted">— estimado pelo preço de venda, não pelo custo real do produto.</span>'
+        : '') +
+      (semHistorico > 0
+        ? '<br><span class="muted">' + semHistorico + ' anúncio(s) ainda sem série diária: a velocidade deles é a média simples de 30 dias, ' +
+          'sem corrigir dias sem estoque nem promoção. Melhora sozinho conforme o histórico acumula.</span>'
+        : '') +
+    '</div>' +
+    (agir.length === 0
+      ? '<div class="muted" style="padding:16px 0;text-align:center">Nada a comprar agora 🎉</div>'
+      : '<table><thead><tr><th>Anúncio</th><th>Situação</th><th class="num">Estoque</th>' +
+        '<th class="num">Velocidade</th><th class="num">Dura</th><th class="num">Comprar</th><th>Por quê</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>');
+}
+
 function renderPerguntas() {
   if (perguntas.length === 0) return '<div class="muted" style="padding:16px 0; text-align:center">Nenhuma pergunta sem resposta 🎉</div>';
   return perguntas.map(q => {
@@ -444,18 +636,23 @@ async function load(forcar) {
 
   document.getElementById('info').textContent = forcar ? 'atualizando (pode levar um tempo)...' : 'carregando...';
   try {
-    const [cat, perg, conv, rat] = await Promise.all([
+    const [cat, perg, conv, rat, rep, hist] = await Promise.all([
       api('/api/catalog/competition' + (forcar ? '?refresh=1' : '')),
       api('/api/questions/pending' + (forcar ? '?refresh=1' : '')).catch(() => ({ questions: [] })),
       api('/api/conversion' + (forcar ? '?refresh=1' : '')).catch(() => null),
       api('/api/ratings' + (forcar ? '?refresh=1' : '')).catch(() => null),
+      api('/api/replenishment').catch(() => null),
+      api('/api/history').catch(() => null),
     ]);
     data = cat;
     perguntas = perg.questions || [];
     conversao = conv;
     notas = rat;
+    reposicao = rep;
+    historico = hist;
     document.getElementById('info').textContent = 'atualizado em ' + fmtHora(data.updatedAt);
     renderCards(); renderInsight(); renderChart(); renderDetail();
+    if (aba !== 'hoje') setAba(aba);
   } catch (e) {
     document.getElementById('info').textContent = 'Erro: ' + e.message;
     if (e.status === 401 || /x-api-key/i.test(e.message || '')) {

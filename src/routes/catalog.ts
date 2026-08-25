@@ -2,6 +2,8 @@ import { FastifyInstance } from 'fastify';
 import { getCatalogCompetition, refreshCatalogCompetition } from '../core/catalogCompetition';
 import { getConversion, refreshConversion } from '../core/conversion';
 import { getListingRatings, refreshListingRatings } from '../core/listingRatings';
+import { datasDisponiveis, serieDoAnuncio, variacao, vendasPorDia } from '../core/history';
+import { calcularReposicao } from '../core/replenishmentScan';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import { debugItemRaw, diagnosticarSaleFee, getUltimoPedidoBruto, getUnansweredQuestions, MlQuestion } from '../ml/mlClient';
 
@@ -108,6 +110,51 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
     refreshListingRatings().catch(() => undefined);
     reply.code(202);
     return { ok: true, mensagem: 'Varredura de notas iniciada' };
+  });
+
+  /** Lista de compra: o que repor, quanto e por que. Le do cache + serie diaria; nao chama o ML. */
+  app.get('/api/replenishment', async (_req, reply) => {
+    const r = calcularReposicao();
+    if (!r) {
+      reply.code(409);
+      return { mensagem: 'Sem dados de conversao ainda. A varredura roda em background apos conectar.' };
+    }
+    return r;
+  });
+
+  /** Serie diaria de um anuncio: e o que alimenta o mini-grafico e a comparacao de periodos. */
+  app.get('/api/history/:itemId', async (req) => {
+    const { itemId } = req.params as { itemId: string };
+    const { dias } = req.query as { dias?: string };
+    const janela = Math.min(400, Math.max(2, Number(dias) || 30));
+    const serie = serieDoAnuncio(itemId, janela);
+    const porDia = vendasPorDia(serie);
+
+    // Compara a metade recente contra a anterior: e a leitura de "esta subindo ou caindo".
+    const meio = Math.floor(porDia.length / 2);
+    const antiga = porDia.slice(0, meio);
+    const recente = porDia.slice(meio);
+    const soma = (l: typeof porDia, campo: 'unidades' | 'liquido') => l.reduce((t, d) => t + d[campo], 0);
+
+    return {
+      itemId,
+      diasComRegistro: serie.length,
+      serie,
+      porDia,
+      tendencia: porDia.length >= 4
+        ? {
+            unidades: variacao(soma(recente, 'unidades'), soma(antiga, 'unidades')),
+            liquido: variacao(soma(recente, 'liquido'), soma(antiga, 'liquido')),
+            comparando: `${recente.length} dia(s) recentes contra ${antiga.length} anteriores`,
+          }
+        : null,
+    };
+  });
+
+  /** Quantos dias de serie ja foram acumulados — o painel usa pra explicar o que ainda nao da. */
+  app.get('/api/history', async () => {
+    const datas = datasDisponiveis();
+    return { dias: datas.length, maisRecente: datas[0] ?? null, maisAntigo: datas[datas.length - 1] ?? null };
   });
 
   /** Pedido mais recente, cru. Serve pra conferir o significado de sale_fee contra um dado real

@@ -4,6 +4,7 @@ import { config } from '../config';
 import { logger } from '../logger';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import { getItemsAttributes, getSalesByItem, getSellerItemIds, getVisitsWindows } from '../ml/mlClient';
+import { gravarDia, podar, SnapshotDiario } from './history';
 
 /**
  * Conversao por anuncio = unidades vendidas / visitas, em duas janelas (30 e 7 dias).
@@ -211,6 +212,28 @@ async function doScan(): Promise<ConversionResult> {
     truncado,
   };
   persist(result);
+
+  // Grava o retrato do dia. E o que permite, amanha, responder "esta subindo ou caindo?" e
+  // "aquela promocao funcionou?" — perguntas que o ML nao responde retroativamente.
+  try {
+    const snapshots: SnapshotDiario[] = items.map((i) => ({
+      data: new Date().toISOString().slice(0, 10),
+      itemId: i.itemId,
+      titulo: i.title,
+      preco: attrs.find((a) => a.id === i.itemId)?.price ?? null,
+      estoque: i.disponivel ?? null,
+      visitas: i.visitas30,
+      unidades30: i.vendas30,
+      liquido30: i.liquido30,
+      emPromocao: null, // preenchido quando a leitura de promocoes entrar
+    }));
+    gravarDia(snapshots);
+    podar();
+  } catch (err: any) {
+    // Historico e complemento: se falhar, a analise do dia continua valendo.
+    logger.warn('[HISTORICO] Falha ao gravar o dia:', err?.message || err);
+  }
+
   logger.info(
     `[CONVERSAO] Concluido: ${items.length} anuncios; conversao media 30d = ${result.conversaoMedia30}%; ` +
     `bruto 30d = R$ ${result.bruto30.toFixed(2)}; liquido 30d = R$ ${result.liquido30.toFixed(2)}`,
