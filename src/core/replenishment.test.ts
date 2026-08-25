@@ -8,6 +8,7 @@ function vel(unidadesPorDia: number, dias = 30): Velocidade {
     diasConsiderados: dias,
     diasDescartadosSemEstoque: 0,
     diasDescartadosPromocao: 0,
+    diasDescartadosPorLacuna: 0,
     confiavel: dias >= 7,
   };
 }
@@ -50,6 +51,25 @@ describe('vendasPorDia', () => {
   it('serie de um dia so nao produz nenhuma diferenca', () => {
     expect(vendasPorDia([s('2026-08-01', 10, 100, 5)])).toEqual([]);
   });
+
+  it('registra quantos dias cada intervalo cobre — dias consecutivos cobrem 1', () => {
+    const dias = vendasPorDia([s('2026-08-01', 10, 100, 5), s('2026-08-02', 13, 130, 5)]);
+    expect(dias[0].diasCobertos).toBe(1);
+    expect(dias[0].lacunaLonga).toBe(false);
+  });
+
+  it('uma lacuna na gravacao cobre varios dias, e isso fica registrado', () => {
+    // Servico fora do ar de 2 a 4: a diferenca cobre 3 dias, nao 1.
+    const dias = vendasPorDia([s('2026-08-01', 10, 100, 5), s('2026-08-04', 19, 190, 5)]);
+    expect(dias[0].diasCobertos).toBe(3);
+    expect(dias[0].unidades).toBe(9);
+    expect(dias[0].lacunaLonga).toBe(false);
+  });
+
+  it('lacuna longa demais e marcada: a diferenca do acumulado de 30d deixa de valer', () => {
+    const dias = vendasPorDia([s('2026-07-01', 10, 100, 5), s('2026-08-01', 40, 400, 5)]);
+    expect(dias[0].lacunaLonga).toBe(true);
+  });
 });
 
 describe('velocidadeDeVenda', () => {
@@ -58,6 +78,32 @@ describe('velocidadeDeVenda', () => {
 
   it('e a media simples quando nada e descartado', () => {
     expect(velocidadeDeVenda([dia(2), dia(4), dia(3)]).unidadesPorDia).toBe(3);
+  });
+
+  it('divide pelos DIAS cobertos, nao pelo numero de registros', () => {
+    // 9 unidades num intervalo de 3 dias sao 3 un./dia — nao 9, como seria se o registro
+    // fosse tratado como um dia so. Era este o furo.
+    const v = velocidadeDeVenda([{ unidades: 9, tinhaEstoque: true, emPromocao: false, diasCobertos: 3 }]);
+    expect(v.unidadesPorDia).toBe(3);
+    expect(v.diasConsiderados).toBe(3);
+  });
+
+  it('mistura de intervalos normais e com lacuna soma dias, nao registros', () => {
+    const v = velocidadeDeVenda([
+      { unidades: 2, tinhaEstoque: true, emPromocao: false, diasCobertos: 1 },
+      { unidades: 6, tinhaEstoque: true, emPromocao: false, diasCobertos: 3 },
+    ]);
+    expect(v.unidadesPorDia).toBe(2); // 8 unidades em 4 dias
+    expect(v.diasConsiderados).toBe(4);
+  });
+
+  it('lacuna longa e descartada em vez de virar venda inventada', () => {
+    const v = velocidadeDeVenda([
+      { unidades: 3, tinhaEstoque: true, emPromocao: false, diasCobertos: 1 },
+      { unidades: 90, tinhaEstoque: true, emPromocao: false, diasCobertos: 30, lacunaLonga: true },
+    ]);
+    expect(v.unidadesPorDia).toBe(3);
+    expect(v.diasDescartadosPorLacuna).toBe(30);
   });
 
   it('ruptura mascara demanda: dias sem estoque puxam a media pra baixo se contados', () => {

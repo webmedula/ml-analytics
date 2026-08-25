@@ -118,6 +118,9 @@ function montarExplicacao(
   if (velocidade.diasDescartadosPromocao > 0) {
     descartes.push(`${velocidade.diasDescartadosPromocao} dia(s) de promocao foram ignorados (inflariam a media)`);
   }
+  if (velocidade.diasDescartadosPorLacuna > 0) {
+    descartes.push(`${velocidade.diasDescartadosPorLacuna} dia(s) sem gravacao foram ignorados (o servico ficou fora do ar)`);
+  }
   const nota = descartes.length ? ` ${descartes.join('; ')}.` : '';
 
   switch (urgencia) {

@@ -221,10 +221,24 @@ export interface VendasDoAnuncio {
   comissaoD7: number;
   /** quantos itens do periodo nao trouxeram sale_fee — se >0, a comissao esta subestimada */
   itensSemComissao: number;
+  /** frete pago pelo vendedor, rateado pelos itens. Preenchido so quando os envios sao resolvidos. */
+  frete: number;
+  freteD7: number;
+}
+
+/** Uma linha de pedido, guardada pra permitir o rateio do frete depois. */
+export interface LinhaDePedido {
+  shipmentId: string | null;
+  itemId: string;
+  valor: number;
+  dentro7: boolean;
 }
 
 function vazio(): VendasDoAnuncio {
-  return { unidades: 0, unidadesD7: 0, bruto: 0, brutoD7: 0, comissao: 0, comissaoD7: 0, itensSemComissao: 0 };
+  return {
+    unidades: 0, unidadesD7: 0, bruto: 0, brutoD7: 0, comissao: 0, comissaoD7: 0,
+    itensSemComissao: 0, frete: 0, freteD7: 0,
+  };
 }
 
 /**
@@ -238,13 +252,14 @@ function vazio(): VendasDoAnuncio {
  * NAO inclui frete pago pelo vendedor: esse dado exige uma chamada por envio
  * (/shipments/{id}/costs) e sairia caro numa varredura de 30 dias. Fica pra uma camada separada.
  */
-export async function getSalesByItem(dias = 30): Promise<Map<string, VendasDoAnuncio>> {
+export async function getSalesByItem(dias = 30): Promise<{ porItem: Map<string, VendasDoAnuncio>; linhas: LinhaDePedido[] }> {
   const sellerId = await getMlUserId();
   const now = Date.now();
   const fromIso = new Date(now - dias * 24 * 60 * 60 * 1000).toISOString();
   const corte7 = now - 7 * 24 * 60 * 60 * 1000;
 
   const out = new Map<string, VendasDoAnuncio>();
+  const linhas: LinhaDePedido[] = [];
   const limit = 50;
   let offset = 0;
   const MAX = 4000;
@@ -258,6 +273,8 @@ export async function getSalesByItem(dias = 30): Promise<Map<string, VendasDoAnu
       if (String(o.status) === 'cancelled') continue;
       const dt = new Date(o.date_created).getTime();
       const dentro7 = Number.isFinite(dt) && dt >= corte7;
+
+      const shipmentId = o?.shipping?.id != null ? String(o.shipping.id) : null;
 
       for (const it of o.order_items || []) {
         const id = it?.item?.id;
@@ -280,20 +297,21 @@ export async function getSalesByItem(dias = 30): Promise<Map<string, VendasDoAnu
           cur.comissaoD7 += comissao;
         }
         out.set(id, cur);
+        linhas.push({ shipmentId, itemId: id, valor: bruto, dentro7 });
       }
     }
     offset += limit;
     const total = data.paging?.total ?? out.size;
     if (orders.length === 0 || offset >= total || offset >= MAX) break;
   }
-  return out;
+  return { porItem: out, linhas };
 }
 
 /** Compatibilidade: so as unidades, derivadas do mesmo varrimento. */
 export async function getSoldUnitsByItem(dias = 30): Promise<Map<string, { total: number; d7: number }>> {
-  const vendas = await getSalesByItem(dias);
+  const { porItem } = await getSalesByItem(dias);
   const out = new Map<string, { total: number; d7: number }>();
-  for (const [id, v] of vendas) out.set(id, { total: v.unidades, d7: v.unidadesD7 });
+  for (const [id, v] of porItem) out.set(id, { total: v.unidades, d7: v.unidadesD7 });
   return out;
 }
 
@@ -390,6 +408,38 @@ export async function diagnosticarSaleFee(dias = 90): Promise<any> {
     porQuantidade: resumo,
     exemplosComQuantidadeMaiorQue1: comQtdMaior.slice(0, 10),
   };
+}
+
+/**
+ * Custo do frete PAGO PELO VENDEDOR num envio. Devolve null quando o ML nao informa.
+ *
+ * O ML nao e consistente na forma: as vezes `senders[].cost`, as vezes `gross_amount` menos o que
+ * o comprador pagou (`receiver.cost`). Tentamos as duas leituras e ficamos com a primeira que
+ * fizer sentido. Envio ja despachado nunca muda de custo — por isso quem chama guarda pra sempre.
+ */
+export async function getShipmentCost(shipmentId: string): Promise<number | null> {
+  try {
+    const d = await mlRequest<any>(`/shipments/${shipmentId}/costs`);
+
+    const dosSenders = Array.isArray(d?.senders)
+      ? d.senders.reduce((t: number, s: any) => t + Number(s?.cost ?? 0), 0)
+      : null;
+    if (dosSenders != null && Number.isFinite(dosSenders) && dosSenders > 0) {
+      return Math.round(dosSenders * 100) / 100;
+    }
+
+    const bruto = Number(d?.gross_amount ?? NaN);
+    const doComprador = Number(d?.receiver?.cost ?? 0);
+    if (Number.isFinite(bruto)) {
+      const doVendedor = Math.max(0, bruto - (Number.isFinite(doComprador) ? doComprador : 0));
+      return Math.round(doVendedor * 100) / 100;
+    }
+
+    // Respondeu, mas sem numero reconhecivel: 0 e uma resposta legitima (frete pago pelo comprador).
+    return dosSenders === 0 ? 0 : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Pedido mais recente, cru — pra conferir o significado de sale_fee contra um dado real. */

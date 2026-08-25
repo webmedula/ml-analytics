@@ -5,6 +5,7 @@ import { logger } from '../logger';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import { getItemsAttributes, getSalesByItem, getSellerItemIds, getVisitsWindows } from '../ml/mlClient';
 import { gravarDia, podar, SnapshotDiario } from './history';
+import { ratearFrete, resolverFretes } from './shippingCosts';
 
 /**
  * Conversao por anuncio = unidades vendidas / visitas, em duas janelas (30 e 7 dias).
@@ -33,7 +34,10 @@ export interface ConversionView {
   /** comissao REAL cobrada pelo ML (sale_fee), nao estimada por tabela */
   comissao30: number;
   comissao7: number;
-  /** bruto - comissao. NAO desconta frete pago pelo vendedor nem custo do produto. */
+  /** frete pago pelo VENDEDOR, rateado pelo valor das linhas do pedido */
+  frete30: number;
+  frete7: number;
+  /** bruto - comissao - frete. Ainda NAO desconta o custo do produto. */
   liquido30: number;
   liquido7: number;
   /** liquido / bruto, em % — quanto sobra de cada real vendido depois da comissao */
@@ -70,10 +74,14 @@ export interface ConversionResult {
   /** Totais da conta no periodo — o que o painel mostra como KPI. */
   bruto30: number;
   comissao30: number;
+  frete30: number;
   liquido30: number;
   bruto7: number;
   comissao7: number;
+  frete7: number;
   liquido7: number;
+  /** Quantos envios ainda faltam consultar: enquanto for > 0, o frete esta subestimado. */
+  fretesPendentes: number;
   /** Algum anuncio ficou com comissao subestimada (item sem sale_fee na resposta do ML). */
   comissaoIncompleta: boolean;
   /**
@@ -142,10 +150,34 @@ async function doScan(): Promise<ConversionResult> {
   logger.info(`[CONVERSAO] ${ids.length} anuncios ativos (teto ${max}${truncado ? ', truncado' : ''}).`);
 
   const attrs = await getItemsAttributes(ids);
-  const [visitasMap, vendasMap] = await Promise.all([
+  const [visitasMap, vendas] = await Promise.all([
     getVisitsWindows(ids),
     getSalesByItem(30),
   ]);
+  const vendasMap = vendas.porItem;
+
+  // FRETE: agrupa as linhas por envio, resolve o custo (cache + teto por varredura) e rateia
+  // proporcionalmente ao valor de cada linha. Sem isso, "liquido" ignora o que costuma ser o maior
+  // custo depois da mercadoria numa loja de ticket baixo.
+  const porEnvio = new Map<string, typeof vendas.linhas>();
+  for (const l of vendas.linhas) {
+    if (!l.shipmentId) continue;
+    const lista = porEnvio.get(l.shipmentId) || [];
+    lista.push(l);
+    porEnvio.set(l.shipmentId, lista);
+  }
+  const fretes = await resolverFretes(Array.from(porEnvio.keys()));
+  for (const [shipmentId, linhasDoEnvio] of porEnvio) {
+    const custo = fretes.custos.get(shipmentId);
+    if (custo == null || custo <= 0) continue;
+    const rateado = ratearFrete(custo, linhasDoEnvio.map((l) => l.valor));
+    linhasDoEnvio.forEach((l, idx) => {
+      const alvo = vendasMap.get(l.itemId);
+      if (!alvo) return;
+      alvo.frete += rateado[idx];
+      if (l.dentro7) alvo.freteD7 += rateado[idx];
+    });
+  }
 
   const items: ConversionView[] = attrs.map((a) => {
     const vis = visitasMap.get(a.id) || { v30: 0, v7: 0 };
@@ -158,8 +190,10 @@ async function doScan(): Promise<ConversionResult> {
     const bruto7 = arredonda(sold?.brutoD7 ?? 0);
     const comissao30 = arredonda(sold?.comissao ?? 0);
     const comissao7 = arredonda(sold?.comissaoD7 ?? 0);
-    const liquido30 = arredonda(bruto30 - comissao30);
-    const liquido7 = arredonda(bruto7 - comissao7);
+    const frete30 = arredonda(sold?.frete ?? 0);
+    const frete7 = arredonda(sold?.freteD7 ?? 0);
+    const liquido30 = arredonda(bruto30 - comissao30 - frete30);
+    const liquido7 = arredonda(bruto7 - comissao7 - frete7);
 
     return {
       itemId: a.id,
@@ -176,6 +210,8 @@ async function doScan(): Promise<ConversionResult> {
       bruto7,
       comissao30,
       comissao7,
+      frete30,
+      frete7,
       liquido30,
       liquido7,
       margemComissao30: margemDaComissao(bruto30, liquido30),
@@ -203,12 +239,15 @@ async function doScan(): Promise<ConversionResult> {
     conversaoMedia7: mediaPonderada(items, '7'),
     bruto30: soma('bruto30'),
     comissao30: soma('comissao30'),
+    frete30: soma('frete30'),
     liquido30: soma('liquido30'),
     bruto7: soma('bruto7'),
     comissao7: soma('comissao7'),
+    frete7: soma('frete7'),
     liquido7: soma('liquido7'),
+    fretesPendentes: fretes.naoBuscados,
     comissaoIncompleta: items.some((i) => i.comissaoIncompleta),
-    liquidoInclui: 'Bruto menos a comissao real do ML. NAO desconta frete pago pelo vendedor nem o custo do produto.',
+    liquidoInclui: 'Bruto menos a comissao real do ML e menos o frete pago pelo vendedor. Ainda NAO desconta o custo do produto.',
     truncado,
   };
   persist(result);
@@ -236,7 +275,8 @@ async function doScan(): Promise<ConversionResult> {
 
   logger.info(
     `[CONVERSAO] Concluido: ${items.length} anuncios; conversao media 30d = ${result.conversaoMedia30}%; ` +
-    `bruto 30d = R$ ${result.bruto30.toFixed(2)}; liquido 30d = R$ ${result.liquido30.toFixed(2)}`,
+    `bruto 30d = R$ ${result.bruto30.toFixed(2)}; frete 30d = R$ ${result.frete30.toFixed(2)}; ` +
+    `liquido 30d = R$ ${result.liquido30.toFixed(2)}`,
   );
   return result;
 }

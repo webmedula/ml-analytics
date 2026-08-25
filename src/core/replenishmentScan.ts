@@ -57,6 +57,7 @@ export function calcularReposicao(): ResultadoReposicao | null {
           diasConsiderados: 30,
           diasDescartadosSemEstoque: 0,
           diasDescartadosPromocao: 0,
+          diasDescartadosPorLacuna: 0,
           confiavel: (i.vendas30 || 0) > 0,
         };
 

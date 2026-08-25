@@ -5,7 +5,7 @@ const dataDir = process.env.DATA_DIR || './data';
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v16 (2026-08-25)',
+  appVersion: 'analytics v17 (2026-08-25)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -36,6 +36,10 @@ export const config = {
   // --- serie diaria (historico) ---
   /** Quantos dias de historico manter. 400 cobre um ano e a comparacao com o mesmo mes anterior. */
   historyRetencaoDias: Number(process.env.HISTORY_RETENCAO_DIAS || 400),
+
+  /** Teto de envios novos consultados por varredura. A primeira execucao nao deve comer a cota
+   * inteira do ML: pega os mais recentes e as proximas varreduras completam o passado. */
+  fretesPorVarredura: Number(process.env.FRETES_POR_VARREDURA || 300),
 
   // --- reposicao de estoque ---
   /** Dias entre fazer o pedido e a mercadoria estar disponivel pra vender. */

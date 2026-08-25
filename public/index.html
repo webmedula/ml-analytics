@@ -470,6 +470,7 @@ function renderConversao() {
     const conv = w === '30' ? i.conversao30 : i.conversao7;
     const bruto = w === '30' ? i.bruto30 : i.bruto7;
     const comis = w === '30' ? i.comissao30 : i.comissao7;
+    const fret = w === '30' ? i.frete30 : i.frete7;
     const liq = w === '30' ? i.liquido30 : i.liquido7;
     const convTxt = conv == null ? '<span class="muted">sem visitas</span>' : conv.toFixed(1).replace('.', ',') + '%';
     const alerta = (conv != null && vis >= 30 && conv < 1) ? ' <span class="tag motivo">muita visita, pouca venda</span>' : '';
@@ -480,23 +481,28 @@ function renderConversao() {
       '<td class="num">' + vis + '</td><td class="num">' + ven + '</td>' +
       '<td class="num">' + convTxt + alerta + '</td>' +
       '<td class="num">' + fmtMoney(bruto) + '</td>' +
-      '<td class="num">' + (comis ? '−' + fmtMoney(comis).replace('R$ ', 'R$ ') : '—') + incompleta + '</td>' +
+      '<td class="num">' + (comis ? '−' + fmtMoney(comis) : '—') + incompleta + '</td>' +
+      '<td class="num">' + (fret ? '−' + fmtMoney(fret) : '<span class="muted">—</span>') + '</td>' +
       '<td class="num"><b>' + fmtMoney(liq) + '</b>' + (w === '30' ? margem : '') + '</td></tr>';
   }).join('');
 
   const tot = w === '30'
-    ? { b: conversao.bruto30, c: conversao.comissao30, l: conversao.liquido30 }
-    : { b: conversao.bruto7, c: conversao.comissao7, l: conversao.liquido7 };
+    ? { b: conversao.bruto30, c: conversao.comissao30, f: conversao.frete30, l: conversao.liquido30 }
+    : { b: conversao.bruto7, c: conversao.comissao7, f: conversao.frete7, l: conversao.liquido7 };
 
   return '<div class="insight" style="margin-bottom:12px">' +
       'Em ' + w + ' dias: <b>' + fmtMoney(tot.b) + '</b> em vendas, <b>−' + fmtMoney(tot.c) + '</b> de comissão do ML, ' +
-      'sobrando <b>' + fmtMoney(tot.l) + '</b>. ' +
-      '<span class="muted">Não desconta frete pago por você nem o custo do produto — não é lucro.</span>' +
+      '<b>−' + fmtMoney(tot.f) + '</b> de frete seu, sobrando <b>' + fmtMoney(tot.l) + '</b>. ' +
+      '<span class="muted">Ainda não desconta o custo do produto — não é lucro.</span>' +
+      (conversao.fretesPendentes > 0
+        ? '<br><span class="muted">⚠️ ' + conversao.fretesPendentes + ' envio(s) ainda não consultados: o frete está subestimado e o líquido, otimista. Completa nas próximas varreduras.</span>'
+        : '') +
       (conversao.comissaoIncompleta ? '<br><span class="muted">⚠️ Alguns itens vieram sem comissão na resposta do ML; nesses, o líquido está superestimado.</span>' : '') +
     '</div>' +
     '<div class="muted" style="margin-bottom:8px">Ordenado por quanto cada anúncio deixou no período. "Muita visita, pouca venda" = provável problema de preço, foto ou reputação; poucas visitas = problema de posicionamento.</div>' +
     '<table><thead><tr><th>Anúncio</th><th class="num">Visitas (' + w + 'd)</th><th class="num">Vendas (' + w + 'd)</th>' +
-    '<th class="num">Conversão</th><th class="num">Bruto</th><th class="num">Comissão</th><th class="num">Líquido</th>' +
+    '<th class="num">Conversão</th><th class="num">Bruto</th><th class="num">Comissão</th>' +
+    '<th class="num">Frete</th><th class="num">Líquido</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
