@@ -115,11 +115,15 @@ export interface MlItemAttributes {
   sold_quantity?: number;
   available_quantity?: number;
   seller_id?: number;
+  /** Data de criacao do anuncio — usada pra pesar a idade/historico antes de recriar. */
+  date_created?: string;
+  /** Qualidade do anuncio (0-1) segundo o ML. */
+  health?: number | null;
 }
 
 /** Multiget de atributos de varios itens (o ML aceita ate 20 ids por chamada em /items?ids=). */
 export async function getItemsAttributes(ids: string[]): Promise<MlItemAttributes[]> {
-  const attrs = 'id,title,price,currency_id,status,catalog_listing,catalog_product_id,permalink,sold_quantity,available_quantity,seller_id';
+  const attrs = 'id,title,price,currency_id,status,catalog_listing,catalog_product_id,permalink,sold_quantity,available_quantity,seller_id,date_created,health';
   const out: MlItemAttributes[] = [];
 
   for (let i = 0; i < ids.length; i += 20) {
@@ -205,15 +209,42 @@ export async function getVisitsWindows(ids: string[]): Promise<Map<string, { v30
   return out;
 }
 
-/** Unidades vendidas por anuncio nos ultimos `dias` (busca pedidos NAO cancelados via /orders/search),
- * separando ja em duas janelas: total do periodo e ultimos 7 dias. */
-export async function getSoldUnitsByItem(dias = 30): Promise<Map<string, { total: number; d7: number }>> {
+export interface VendasDoAnuncio {
+  /** unidades no periodo inteiro e nos ultimos 7 dias */
+  unidades: number;
+  unidadesD7: number;
+  /** preco x quantidade, antes de qualquer desconto */
+  bruto: number;
+  brutoD7: number;
+  /** comissao REAL cobrada pelo ML (sale_fee dos itens), nao estimada por tabela */
+  comissao: number;
+  comissaoD7: number;
+  /** quantos itens do periodo nao trouxeram sale_fee — se >0, a comissao esta subestimada */
+  itensSemComissao: number;
+}
+
+function vazio(): VendasDoAnuncio {
+  return { unidades: 0, unidadesD7: 0, bruto: 0, brutoD7: 0, comissao: 0, comissaoD7: 0, itensSemComissao: 0 };
+}
+
+/**
+ * Vendas por anuncio nos ultimos `dias`, em DINHEIRO e em unidades, separando ja duas janelas.
+ *
+ * A comissao vem de `order_items[].sale_fee`, que e o valor que o ML de fato cobrou naquela venda —
+ * melhor que estimar por tabela de categoria, porque promocao, tipo de anuncio e frete gratis mudam
+ * a conta. O ML documenta sale_fee como valor POR UNIDADE, entao multiplicamos pela quantidade;
+ * `/debug/order` existe pra conferir isso contra um pedido real da conta.
+ *
+ * NAO inclui frete pago pelo vendedor: esse dado exige uma chamada por envio
+ * (/shipments/{id}/costs) e sairia caro numa varredura de 30 dias. Fica pra uma camada separada.
+ */
+export async function getSalesByItem(dias = 30): Promise<Map<string, VendasDoAnuncio>> {
   const sellerId = await getMlUserId();
   const now = Date.now();
   const fromIso = new Date(now - dias * 24 * 60 * 60 * 1000).toISOString();
   const corte7 = now - 7 * 24 * 60 * 60 * 1000;
 
-  const out = new Map<string, { total: number; d7: number }>();
+  const out = new Map<string, VendasDoAnuncio>();
   const limit = 50;
   let offset = 0;
   const MAX = 4000;
@@ -227,13 +258,27 @@ export async function getSoldUnitsByItem(dias = 30): Promise<Map<string, { total
       if (String(o.status) === 'cancelled') continue;
       const dt = new Date(o.date_created).getTime();
       const dentro7 = Number.isFinite(dt) && dt >= corte7;
+
       for (const it of o.order_items || []) {
         const id = it?.item?.id;
         if (!id) continue;
-        const q = Number(it.quantity ?? 0);
-        const cur = out.get(id) || { total: 0, d7: 0 };
-        cur.total += q;
-        if (dentro7) cur.d7 += q;
+
+        const qtd = Number(it.quantity ?? 0);
+        const preco = Number(it.unit_price ?? 0);
+        const bruto = preco * qtd;
+        const temFee = it.sale_fee != null && Number.isFinite(Number(it.sale_fee));
+        const comissao = temFee ? Number(it.sale_fee) * qtd : 0;
+
+        const cur = out.get(id) || vazio();
+        cur.unidades += qtd;
+        cur.bruto += bruto;
+        cur.comissao += comissao;
+        if (!temFee) cur.itensSemComissao += 1;
+        if (dentro7) {
+          cur.unidadesD7 += qtd;
+          cur.brutoD7 += bruto;
+          cur.comissaoD7 += comissao;
+        }
         out.set(id, cur);
       }
     }
@@ -242,6 +287,21 @@ export async function getSoldUnitsByItem(dias = 30): Promise<Map<string, { total
     if (orders.length === 0 || offset >= total || offset >= MAX) break;
   }
   return out;
+}
+
+/** Compatibilidade: so as unidades, derivadas do mesmo varrimento. */
+export async function getSoldUnitsByItem(dias = 30): Promise<Map<string, { total: number; d7: number }>> {
+  const vendas = await getSalesByItem(dias);
+  const out = new Map<string, { total: number; d7: number }>();
+  for (const [id, v] of vendas) out.set(id, { total: v.unidades, d7: v.unidadesD7 });
+  return out;
+}
+
+/** Pedido mais recente, cru — pra conferir o significado de sale_fee contra um dado real. */
+export async function getUltimoPedidoBruto(): Promise<any> {
+  const sellerId = await getMlUserId();
+  const data = await mlRequest<{ results?: any[] }>(`/orders/search?seller=${sellerId}&sort=date_desc&limit=1`);
+  return data?.results?.[0] ?? null;
 }
 
 export interface MlQuestion {
@@ -291,18 +351,71 @@ export async function getUnansweredQuestions(max = 100): Promise<MlQuestion[]> {
   return out.slice(0, max);
 }
 
-/** Tenta ler as avaliacoes (nota media + total) de um anuncio pela API oficial do ML. O ML
- * restringiu esse recurso; retorna null se nao houver acesso. Duas rotas conhecidas sao tentadas. */
-export async function getItemRating(itemId: string): Promise<{ ratingAverage: number | null; total: number | null } | null> {
-  try {
-    const r = await mlRequest<any>(`/reviews/item/${itemId}`);
-    const avg = r?.rating_average ?? r?.paging?.rating_average ?? null;
-    const total = r?.paging?.total ?? r?.total ?? (Array.isArray(r?.reviews) ? r.reviews.length : null);
-    if (avg != null || total != null) return { ratingAverage: avg != null ? Number(avg) : null, total: total != null ? Number(total) : null };
-    return null;
-  } catch {
-    return null;
+export interface MlRating {
+  ratingAverage: number | null;
+  total: number | null;
+  /** Qual rota da API respondeu — util pra diagnosticar acesso restrito. */
+  rota: string;
+  /** Produto do usuario (MLBU...) sob o qual o ML agrupa as opinioes deste anuncio. */
+  userProductId: string | null;
+  /**
+   * A CHAVE DE AGRUPAMENTO das opinioes, lida do proprio review (`secondary_key`).
+   * - Comeca com MLBU -> o pool e o produto do usuario (so seus anuncios).
+   * - Comeca com MLB (sem U) -> o pool e o produto de CATALOGO, dividido com concorrentes.
+   * Descoberto empiricamente em 2026-08-20; ver o comentario em classificarAnuncio.
+   */
+  chaveDoPool: string | null;
+  /** `catalog_listing` que vem DENTRO do review: diz se aquele pool e de catalogo. */
+  poolDeCatalogo: boolean | null;
+  /** O anuncio a que o primeiro review pertence. Se for de OUTRO MLB, o pool e compartilhado. */
+  anuncioDoPrimeiroReview: string | null;
+}
+
+/** Extrai nota media e total de opinioes das varias formas que o ML ja usou nessa resposta. */
+export function parseRatingPayload(r: any): { ratingAverage: number | null; total: number | null } | null {
+  if (!r || typeof r !== 'object') return null;
+  const avgRaw = r.rating_average ?? r.paging?.rating_average ?? r.reviews_summary?.rating_average ?? null;
+  const totalRaw = r.paging?.total ?? r.total ?? r.reviews_summary?.total ?? (Array.isArray(r.reviews) ? r.reviews.length : null);
+  const ratingAverage = avgRaw != null && Number.isFinite(Number(avgRaw)) ? Number(avgRaw) : null;
+  const total = totalRaw != null && Number.isFinite(Number(totalRaw)) ? Number(totalRaw) : null;
+  if (ratingAverage == null && total == null) return null;
+  return { ratingAverage, total };
+}
+
+/** Le, do primeiro review da resposta, a chave sob a qual o ML agrupa aquelas opinioes. */
+export function parsePoolPayload(r: any): Pick<MlRating, 'userProductId' | 'chaveDoPool' | 'poolDeCatalogo' | 'anuncioDoPrimeiroReview'> {
+  const primeiro = Array.isArray(r?.reviews) && r.reviews.length > 0 ? r.reviews[0] : null;
+  return {
+    userProductId: r?.user_product_id ?? null,
+    chaveDoPool: primeiro?.secondary_key ?? null,
+    poolDeCatalogo: typeof primeiro?.catalog_listing === 'boolean' ? primeiro.catalog_listing : null,
+    anuncioDoPrimeiroReview: primeiro?.reviewable_object?.id ?? null,
+  };
+}
+
+/**
+ * Le as avaliacoes (nota media + total) de um id — que pode ser um ANUNCIO (MLB...) ou um PRODUTO
+ * de catalogo (MLB...). O ML restringiu esse recurso; tentamos as duas rotas conhecidas e
+ * devolvemos null se nenhuma responder. A rota que funcionou volta junto, pro diagnostico.
+ */
+export async function getRating(id: string): Promise<MlRating | null> {
+  const rotas = [`/reviews/item/${id}`, `/reviews/search?item_id=${id}`];
+  for (const rota of rotas) {
+    try {
+      const bruto = await mlRequest<any>(rota);
+      const parsed = parseRatingPayload(bruto);
+      if (parsed) return { ...parsed, rota, ...parsePoolPayload(bruto) };
+    } catch {
+      // rota indisponivel nessa conta/app — tenta a proxima
+    }
   }
+  return null;
+}
+
+/** Compatibilidade: nota media + total de um anuncio (sem a rota). */
+export async function getItemRating(itemId: string): Promise<{ ratingAverage: number | null; total: number | null } | null> {
+  const r = await getRating(itemId);
+  return r ? { ratingAverage: r.ratingAverage, total: r.total } : null;
 }
 
 /** Diagnostico: devolve as respostas CRUAS do ML pra um anuncio (atributos + price_to_win +

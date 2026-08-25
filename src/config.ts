@@ -5,7 +5,7 @@ const dataDir = process.env.DATA_DIR || './data';
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v11 (2026-07-24)',
+  appVersion: 'analytics v14 (2026-08-25)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -25,8 +25,17 @@ export const config = {
   // Analise de conversao (visitas x vendas)
   conversionMaxItems: Number(process.env.CONVERSION_MAX_ITEMS || 500),
 
+  // Diagnostico de notas / candidatos a recriacao de anuncio
+  ratingsScanMaxItems: Number(process.env.RATINGS_SCAN_MAX_ITEMS || 500),
+  ratingsScanIntervalHours: Number(process.env.RATINGS_SCAN_INTERVAL_HOURS || 12),
+  /** Nota minima aceitavel: abaixo disso o anuncio vira candidato. */
+  ratingsMinScore: Number(process.env.RATINGS_MIN_SCORE || 4.5),
+  /** Minimo de opinioes pra levar a nota a serio (evita agir por causa de 1 review ruim). */
+  ratingsMinReviews: Number(process.env.RATINGS_MIN_REVIEWS || 3),
+
   dataDir,
   mlTokenStorePath: path.join(dataDir, 'ml-token.json'),
   catalogCompetitionCachePath: path.join(dataDir, 'catalog-competition-cache.json'),
   conversionCachePath: path.join(dataDir, 'conversion-cache.json'),
+  ratingsCachePath: path.join(dataDir, 'listing-ratings-cache.json'),
 };

@@ -3,6 +3,7 @@ import { logger } from './logger';
 import { buildServer } from './server';
 import { startCatalogLoop } from './core/catalogCompetition';
 import { startConversionLoop } from './core/conversion';
+import { startRatingsLoop } from './core/listingRatings';
 
 async function main(): Promise<void> {
   const app = buildServer();
@@ -14,6 +15,7 @@ async function main(): Promise<void> {
 
   startCatalogLoop();
   startConversionLoop();
+  startRatingsLoop();
 }
 
 main().catch((err) => {

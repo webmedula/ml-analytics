@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from '../config';
 import { logger } from '../logger';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
-import { getItemsAttributes, getSellerItemIds, getSoldUnitsByItem, getVisitsWindows } from '../ml/mlClient';
+import { getItemsAttributes, getSalesByItem, getSellerItemIds, getVisitsWindows } from '../ml/mlClient';
 
 /**
  * Conversao por anuncio = unidades vendidas / visitas, em duas janelas (30 e 7 dias).
@@ -24,6 +24,33 @@ export interface ConversionView {
   visitas7: number;
   vendas7: number;
   conversao7: number | null;
+
+  // --- dinheiro (janela de 30 dias e de 7) ---
+  /** preco x quantidade, antes de descontos */
+  bruto30: number;
+  bruto7: number;
+  /** comissao REAL cobrada pelo ML (sale_fee), nao estimada por tabela */
+  comissao30: number;
+  comissao7: number;
+  /** bruto - comissao. NAO desconta frete pago pelo vendedor nem custo do produto. */
+  liquido30: number;
+  liquido7: number;
+  /** liquido / bruto, em % — quanto sobra de cada real vendido depois da comissao */
+  margemComissao30: number | null;
+  /** liquido / unidades — quanto cada venda deixa, em media */
+  ticketLiquido30: number | null;
+  /** true quando algum item do periodo veio sem sale_fee: a comissao esta subestimada */
+  comissaoIncompleta: boolean;
+}
+
+/** Percentual do bruto que sobra depois da comissao. Sem bruto => null. */
+export function margemDaComissao(bruto: number, liquido: number): number | null {
+  if (!bruto || bruto <= 0) return null;
+  return Math.round((liquido / bruto) * 1000) / 10;
+}
+
+function arredonda(v: number): number {
+  return Math.round(v * 100) / 100;
 }
 
 /** Conversao em % = vendas / visitas * 100. Sem visitas => null (nao da pra calcular). */
@@ -39,6 +66,20 @@ export interface ConversionResult {
   /** Conversao media (ponderada por visitas) em cada janela. */
   conversaoMedia30: number | null;
   conversaoMedia7: number | null;
+  /** Totais da conta no periodo — o que o painel mostra como KPI. */
+  bruto30: number;
+  comissao30: number;
+  liquido30: number;
+  bruto7: number;
+  comissao7: number;
+  liquido7: number;
+  /** Algum anuncio ficou com comissao subestimada (item sem sale_fee na resposta do ML). */
+  comissaoIncompleta: boolean;
+  /**
+   * O liquido NAO desconta frete pago pelo vendedor nem custo do produto. O painel precisa dizer
+   * isso, senao o numero e lido como lucro — e nao e.
+   */
+  liquidoInclui: string;
   truncado: boolean;
 }
 
@@ -102,25 +143,43 @@ async function doScan(): Promise<ConversionResult> {
   const attrs = await getItemsAttributes(ids);
   const [visitasMap, vendasMap] = await Promise.all([
     getVisitsWindows(ids),
-    getSoldUnitsByItem(30),
+    getSalesByItem(30),
   ]);
 
   const items: ConversionView[] = attrs.map((a) => {
     const vis = visitasMap.get(a.id) || { v30: 0, v7: 0 };
     const v30 = vis.v30;
     const v7 = vis.v7;
-    const sold = vendasMap.get(a.id) || { total: 0, d7: 0 };
+    const sold = vendasMap.get(a.id);
+    const unidades30 = sold?.unidades ?? 0;
+    const unidades7 = sold?.unidadesD7 ?? 0;
+    const bruto30 = arredonda(sold?.bruto ?? 0);
+    const bruto7 = arredonda(sold?.brutoD7 ?? 0);
+    const comissao30 = arredonda(sold?.comissao ?? 0);
+    const comissao7 = arredonda(sold?.comissaoD7 ?? 0);
+    const liquido30 = arredonda(bruto30 - comissao30);
+    const liquido7 = arredonda(bruto7 - comissao7);
+
     return {
       itemId: a.id,
       title: a.title,
       permalink: a.permalink,
       disponivel: a.available_quantity,
       visitas30: v30,
-      vendas30: sold.total,
-      conversao30: taxaConversao(sold.total, v30),
+      vendas30: unidades30,
+      conversao30: taxaConversao(unidades30, v30),
       visitas7: v7,
-      vendas7: sold.d7,
-      conversao7: taxaConversao(sold.d7, v7),
+      vendas7: unidades7,
+      conversao7: taxaConversao(unidades7, v7),
+      bruto30,
+      bruto7,
+      comissao30,
+      comissao7,
+      liquido30,
+      liquido7,
+      margemComissao30: margemDaComissao(bruto30, liquido30),
+      ticketLiquido30: unidades30 > 0 ? arredonda(liquido30 / unidades30) : null,
+      comissaoIncompleta: (sold?.itensSemComissao ?? 0) > 0,
     };
   });
 
@@ -132,16 +191,30 @@ async function doScan(): Promise<ConversionResult> {
     return b.visitas30 - a.visitas30;
   });
 
+  const soma = (campo: keyof ConversionView): number =>
+    arredonda(items.reduce((t, i) => t + (Number(i[campo]) || 0), 0));
+
   const result: ConversionResult = {
     items,
     updatedAt: new Date().toISOString(),
     totalAnalisados: items.length,
     conversaoMedia30: mediaPonderada(items, '30'),
     conversaoMedia7: mediaPonderada(items, '7'),
+    bruto30: soma('bruto30'),
+    comissao30: soma('comissao30'),
+    liquido30: soma('liquido30'),
+    bruto7: soma('bruto7'),
+    comissao7: soma('comissao7'),
+    liquido7: soma('liquido7'),
+    comissaoIncompleta: items.some((i) => i.comissaoIncompleta),
+    liquidoInclui: 'Bruto menos a comissao real do ML. NAO desconta frete pago pelo vendedor nem o custo do produto.',
     truncado,
   };
   persist(result);
-  logger.info(`[CONVERSAO] Concluido: ${items.length} anuncios; conversao media 30d = ${result.conversaoMedia30}%`);
+  logger.info(
+    `[CONVERSAO] Concluido: ${items.length} anuncios; conversao media 30d = ${result.conversaoMedia30}%; ` +
+    `bruto 30d = R$ ${result.bruto30.toFixed(2)}; liquido 30d = R$ ${result.liquido30.toFixed(2)}`,
+  );
   return result;
 }
 

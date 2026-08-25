@@ -1,8 +1,9 @@
 import { FastifyInstance } from 'fastify';
 import { getCatalogCompetition, refreshCatalogCompetition } from '../core/catalogCompetition';
 import { getConversion, refreshConversion } from '../core/conversion';
+import { getListingRatings, refreshListingRatings } from '../core/listingRatings';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
-import { debugItemRaw, getUnansweredQuestions, MlQuestion } from '../ml/mlClient';
+import { debugItemRaw, getUltimoPedidoBruto, getUnansweredQuestions, MlQuestion } from '../ml/mlClient';
 
 // Cache leve das perguntas (mudam com frequencia, mas nao a cada request): 5 min.
 let perguntasCache: { total: number; questions: MlQuestion[] } | null = null;
@@ -77,6 +78,61 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao buscar perguntas' };
+    }
+  });
+
+  // Diagnostico de NOTAS: para cada anuncio ativo, nota + total de opinioes e a classificacao de
+  // "recriar zera ou nao". Somente leitura. Serve o cache; ?refresh=1 força a varredura.
+  app.get('/api/ratings', async (req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado. Acesse /oauth/ml/login para conectar.' };
+    }
+    const { refresh } = req.query as { refresh?: string };
+    try {
+      if (refresh === '1') return await refreshListingRatings();
+      const cached = getListingRatings();
+      if (cached) return cached;
+      return await refreshListingRatings();
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro ao diagnosticar notas dos anuncios' };
+    }
+  });
+
+  app.post('/api/ratings/refresh', async (_req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado. Acesse /oauth/ml/login para conectar.' };
+    }
+    refreshListingRatings().catch(() => undefined);
+    reply.code(202);
+    return { ok: true, mensagem: 'Varredura de notas iniciada' };
+  });
+
+  /** Pedido mais recente, cru. Serve pra conferir o significado de sale_fee contra um dado real
+   * antes de confiar no calculo de liquido. Fora de /api pra abrir direto no navegador. */
+  app.get('/debug/order', async (_req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado.' };
+    }
+    try {
+      const pedido = await getUltimoPedidoBruto();
+      if (!pedido) return { mensagem: 'Nenhum pedido encontrado.' };
+      return {
+        dica: 'Confira order_items[].sale_fee: some com unit_price e quantity e compare com o valor real recebido.',
+        id: pedido.id,
+        date_created: pedido.date_created,
+        status: pedido.status,
+        total_amount: pedido.total_amount,
+        order_items: pedido.order_items,
+        payments: pedido.payments,
+        shipping: pedido.shipping,
+      };
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro ao ler o pedido' };
     }
   });
 

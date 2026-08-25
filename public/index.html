@@ -43,6 +43,11 @@
   .tag.empatado { background: rgba(234,179,8,.15); color: var(--yellow); }
   .tag.indefinido { background: var(--panel-2); color: var(--text-dim); }
   .tag.motivo { background: rgba(59,130,246,.15); color: var(--accent); margin: 0 3px 3px 0; display: inline-block; }
+  .tag.recriavel { background: rgba(34,197,94,.15); color: var(--green); }
+  .tag.depende_do_user_product { background: rgba(234,179,8,.15); color: var(--yellow); }
+  .tag.preso_ao_catalogo { background: rgba(239,68,68,.15); color: var(--red); }
+  .tag.poucas_opinioes, .tag.nota_ok, .tag.sem_opinioes, .tag.sem_dados { background: var(--panel-2); color: var(--text-dim); }
+  .evid { max-width: 340px; }
   .title-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .motivo-cell { max-width: 200px; }
   .chartwrap { position: relative; width: 100%; height: 230px; }
@@ -105,6 +110,7 @@
 let data = null;        // resultado do /api/catalog/competition
 let perguntas = [];     // perguntas sem resposta
 let conversao = null;   // resultado do /api/conversion
+let notas = null;       // resultado do /api/ratings (diagnostico de nota por anuncio)
 let janelaConv = '30';  // janela da conversao exibida: '30' ou '7'
 let filtro = 'perdendo';
 let estoqueLimite = 5;
@@ -147,8 +153,13 @@ function baseListagens() { return (conversao && conversao.items) ? conversao.ite
 function totalAtivos() { return conversao ? conversao.totalAnalisados : itens().length; }
 function estoqueBaixo() { return baseListagens().filter(i => i.disponivel != null && i.disponivel <= estoqueLimite).slice().sort((a, b) => (a.disponivel || 0) - (b.disponivel || 0)); }
 function oportunidades() { return perdendoPreco().slice().sort((a, b) => (b.vendidos || 0) - (a.vendidos || 0)); }
-function notaBaixa() { return itens().filter(i => i.nota != null && i.nota < 4).slice().sort((a, b) => (a.nota || 0) - (b.nota || 0)); }
-function temNota() { return itens().some(i => i.nota != null); }
+// --- diagnostico de notas (/api/ratings) ---
+const ACIONAVEIS = ['recriavel', 'depende_do_user_product', 'preso_ao_catalogo', 'indefinido'];
+function itensNotas() { return (notas && notas.items) || []; }
+function notasBaixas() { return itensNotas().filter(i => ACIONAVEIS.indexOf(i.classificacao) >= 0); }
+function notasRecriaveis() { return itensNotas().filter(i => i.classificacao === 'recriavel'); }
+function limiteNota() { return notas ? Number(notas.limite).toFixed(1).replace('.', ',') : '4,5'; }
+function apiNotasOk() { return !!(notas && notas.apiDeAvaliacoesDisponivel); }
 
 function grupoAtual() {
   switch (filtro) {
@@ -161,11 +172,11 @@ function grupoAtual() {
     case 'estoque_baixo': return estoqueBaixo();
     case 'oportunidades': return oportunidades();
     case 'listagens': return baseListagens();
-    case 'nota_baixa': return notaBaixa();
+    case 'notas': return notasBaixas();
     default: return itens();
   }
 }
-const rotulos = { todos: 'anúncios de catálogo', listagens: 'todos os anúncios ativos', perdendo: 'perdendo o Buy Box', perdendo_vantagem: 'perdendo por vantagem (frete/entrega)', perdendo_preco: 'perdendo por preço', ganhando: 'ganhando', empatado: 'empatado', estoque_baixo: 'estoque baixo', oportunidades: 'oportunidades de preço', perguntas: 'perguntas sem resposta', conversao: 'conversão (visitas × vendas)', nota_baixa: 'nota baixa (< 4,0)' };
+const rotulos = { todos: 'anúncios de catálogo', listagens: 'todos os anúncios ativos', perdendo: 'perdendo o Buy Box', perdendo_vantagem: 'perdendo por vantagem (frete/entrega)', perdendo_preco: 'perdendo por preço', ganhando: 'ganhando', empatado: 'empatado', estoque_baixo: 'estoque baixo', oportunidades: 'oportunidades de preço', perguntas: 'perguntas sem resposta', conversao: 'conversão (visitas × vendas)', notas: 'nota baixa — recriar zera ou não' };
 
 function setFiltro(f) { filtro = f; renderCards(); renderDetail(); document.getElementById('detailPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 
@@ -185,11 +196,28 @@ function renderCards() {
     kpi('oportunidades', 'Oportunidades de preço', oportunidades().length, oportunidades().length ? 'warn' : 'ok', 'perde por preço, vende bem') +
     kpi('estoque_baixo', 'Estoque baixo', estoqueBaixo().length, estoqueBaixo().length ? 'warn' : 'ok', '≤ ' + estoqueLimite + ' un. · todos') +
     kpi('perguntas', 'Perguntas pendentes', perguntas.length, perguntas.length ? 'warn' : 'ok', 'sem resposta') +
-    (temNota() ? kpi('nota_baixa', 'Nota baixa', notaBaixa().length, notaBaixa().length ? 'bad' : 'ok', 'avaliação < 4,0') : '') +
+    cardReceita() +
+    cardNotas() +
     cardConversao();
 }
 
+function cardNotas() {
+  if (!notas) return '<div class="kpi disabled"><div class="t">Nota baixa</div><div class="v">—</div><div class="sub">varrendo avaliações...</div></div>';
+  if (!apiNotasOk()) return '<div class="kpi disabled"><div class="t">Nota baixa</div><div class="v">—</div><div class="sub">app do ML sem acesso às opiniões</div></div>';
+  const n = notasBaixas().length;
+  return kpi('notas', 'Nota baixa', n, n ? 'bad' : 'ok', notasRecriaveis().length + ' recriável(is) · < ' + limiteNota());
+}
+
 function convMedia() { if (!conversao) return null; return janelaConv === '30' ? conversao.conversaoMedia30 : conversao.conversaoMedia7; }
+function cardReceita() {
+  if (!conversao) return '';
+  const l = janelaConv === '30' ? conversao.liquido30 : conversao.liquido7;
+  const b = janelaConv === '30' ? conversao.bruto30 : conversao.bruto7;
+  const pct = b > 0 ? Math.round((l / b) * 100) : null;
+  return kpi('receita', 'Líquido ' + janelaConv + 'd', fmtMoney(l), 'ok',
+    b > 0 ? fmtMoney(b) + ' bruto' + (pct != null ? ' · sobra ' + pct + '%' : '') : 'sem vendas no período');
+}
+
 function cardConversao() {
   if (!conversao) return '<div class="kpi disabled"><div class="t">Conversão média</div><div class="v">—</div><div class="sub">carregando visitas...</div></div>';
   const m = convMedia();
@@ -268,6 +296,7 @@ function renderDetail() {
   const body = document.getElementById('detailBody');
   if (filtro === 'perguntas') { body.innerHTML = renderPerguntas(); return; }
   if (filtro === 'conversao') { body.innerHTML = renderConversao(); return; }
+  if (filtro === 'notas') { body.innerHTML = renderNotas(); return; }
   if (filtro === 'listagens' || filtro === 'estoque_baixo') { body.innerHTML = renderListagens(grupoAtual()); return; }
 
   const grupo = grupoAtual();
@@ -295,24 +324,105 @@ function renderListagens(items) {
     '<table><thead><tr><th>Anúncio</th><th class="num">Estoque</th><th class="num">Visitas 30d</th><th class="num">Vendas 30d</th><th class="num">Conversão 30d</th></tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
+const VEREDITO = {
+  recriavel: 'recriar zera',
+  depende_do_user_product: 'depende do produto do usuário',
+  preso_ao_catalogo: 'preso ao catálogo',
+  indefinido: 'indefinido',
+  poucas_opinioes: 'poucas opiniões',
+  nota_ok: 'nota ok',
+  sem_opinioes: 'sem opiniões',
+  sem_dados: 'sem dados',
+};
+
+function renderNotas() {
+  if (!notas) return '<div class="muted" style="padding:16px 0; text-align:center">A varredura de notas roda em background após conectar ao Mercado Livre.</div>';
+  if (!apiNotasOk()) {
+    return '<div class="insight">⚠️ Nenhum anúncio devolveu nota: o aplicativo do Mercado Livre usado por este serviço não tem acesso ao recurso de opiniões. ' +
+      'Sem isso não dá para detectar nota baixa pela API — é preciso liberar a permissão no app em developers.mercadolivre.com.br (ou levantar a nota por outra fonte).</div>';
+  }
+  const grupo = notasBaixas();
+  const r = notas.resumo || {};
+  const resumo = '<div class="muted" style="margin-bottom:10px">' +
+    'Limite: nota &lt; ' + limiteNota() + ' com pelo menos ' + notas.minOpinioes + ' opiniões. ' +
+    'De ' + notas.totalAnalisados + ' anúncios ativos: <b>' + (r.recriavel || 0) + '</b> onde recriar zera a nota, ' +
+    '<b>' + (r.depende_do_user_product || 0) + '</b> onde a opinião é só sua mas depende do produto do usuário, ' +
+    '<b>' + (r.preso_ao_catalogo || 0) + '</b> onde a opinião pertence ao catálogo (recriar não adianta) e ' +
+    '<b>' + (r.indefinido || 0) + '</b> sem evidência suficiente.' +
+    (notas.truncado ? ' <b>Atenção:</b> a varredura parou no teto — há anúncios não analisados.' : '') +
+    '</div>';
+
+  if (grupo.length === 0) return resumo + '<div class="muted" style="padding:16px 0; text-align:center">Nenhum anúncio com nota abaixo do limite 🎉</div>';
+
+  const rows = grupo.map(i => {
+    const nome = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.title || i.itemId) + '</a>' : esc(i.title || i.itemId);
+    const nota = i.nota == null ? '—' : '<span style="color:var(--red)">' + i.nota.toFixed(1).replace('.', ',') + ' ★</span>';
+    const pool = i.chaveDoPool
+      ? esc(i.chaveDoPool) + '<div class="muted">' + (/^[A-Z]{3}U\d+$/.test(i.chaveDoPool) ? 'produto do usuário' : 'catálogo compartilhado') + '</div>'
+      : '—';
+    return '<tr>' +
+      '<td class="title-cell">' + nome + '<div class="muted">' + i.itemId + (i.catalogListing ? ' · catálogo' : '') + '</div></td>' +
+      '<td class="num">' + nota + '</td>' +
+      '<td class="num">' + (i.totalAvaliacoes ?? '—') + '</td>' +
+      '<td>' + pool + '</td>' +
+      '<td><span class="tag ' + i.classificacao + '">' + (VEREDITO[i.classificacao] || i.classificacao) + '</span>' +
+        '<div class="muted evid" style="margin-top:4px">' + esc(i.evidencia) + '</div></td>' +
+      '<td class="num">' + (i.vendidos ?? '—') + '</td>' +
+      '<td class="num">' + (i.disponivel ?? '—') + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return resumo +
+    '<table><thead><tr><th>Anúncio</th><th class="num">Nota</th><th class="num">Opiniões</th>' +
+    '<th>Pool de opiniões</th><th>Veredito</th><th class="num">Vendidos</th><th class="num">Estoque</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<div class="muted" style="margin-top:10px">Antes de recriar um anúncio com muitas vendas, pese: o anúncio novo perde o histórico e o posicionamento na busca.</div>';
+}
+
 function setJanela(j) { janelaConv = j; renderCards(); renderDetail(); }
 
 function renderConversao() {
   if (!conversao || !conversao.items || conversao.items.length === 0) return '<div class="muted" style="padding:16px 0; text-align:center">Sem dados de conversão ainda — a varredura de visitas roda em background após conectar.</div>';
   const w = janelaConv;
-  const rows = conversao.items.map(i => {
+
+  // Ordena por líquido do período: o que mais deixa dinheiro aparece primeiro.
+  const lista = conversao.items.slice().sort((a, b) =>
+    (w === '30' ? b.liquido30 - a.liquido30 : b.liquido7 - a.liquido7));
+
+  const rows = lista.map(i => {
     const vis = w === '30' ? i.visitas30 : i.visitas7;
     const ven = w === '30' ? i.vendas30 : i.vendas7;
     const conv = w === '30' ? i.conversao30 : i.conversao7;
+    const bruto = w === '30' ? i.bruto30 : i.bruto7;
+    const comis = w === '30' ? i.comissao30 : i.comissao7;
+    const liq = w === '30' ? i.liquido30 : i.liquido7;
     const convTxt = conv == null ? '<span class="muted">sem visitas</span>' : conv.toFixed(1).replace('.', ',') + '%';
     const alerta = (conv != null && vis >= 30 && conv < 1) ? ' <span class="tag motivo">muita visita, pouca venda</span>' : '';
     const nome = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.title || i.itemId) + '</a>' : esc(i.title || i.itemId);
+    const margem = i.margemComissao30 == null ? '' : '<div class="muted">' + i.margemComissao30.toFixed(1).replace('.', ',') + '% do bruto</div>';
+    const incompleta = i.comissaoIncompleta ? ' <span class="tag motivo">comissão parcial</span>' : '';
     return '<tr><td class="title-cell">' + nome + '<div class="muted">' + i.itemId + '</div></td>' +
       '<td class="num">' + vis + '</td><td class="num">' + ven + '</td>' +
-      '<td class="num">' + convTxt + alerta + '</td></tr>';
+      '<td class="num">' + convTxt + alerta + '</td>' +
+      '<td class="num">' + fmtMoney(bruto) + '</td>' +
+      '<td class="num">' + (comis ? '−' + fmtMoney(comis).replace('R$ ', 'R$ ') : '—') + incompleta + '</td>' +
+      '<td class="num"><b>' + fmtMoney(liq) + '</b>' + (w === '30' ? margem : '') + '</td></tr>';
   }).join('');
-  return '<div class="muted" style="margin-bottom:8px">Ordenado por menor conversão (maior potencial de melhoria). "Muita visita, pouca venda" = provável problema de preço, foto ou reputação; poucas visitas = problema de posicionamento.</div>' +
-    '<table><thead><tr><th>Anúncio</th><th class="num">Visitas (' + w + 'd)</th><th class="num">Vendas (' + w + 'd)</th><th class="num">Conversão</th></tr></thead><tbody>' + rows + '</tbody></table>';
+
+  const tot = w === '30'
+    ? { b: conversao.bruto30, c: conversao.comissao30, l: conversao.liquido30 }
+    : { b: conversao.bruto7, c: conversao.comissao7, l: conversao.liquido7 };
+
+  return '<div class="insight" style="margin-bottom:12px">' +
+      'Em ' + w + ' dias: <b>' + fmtMoney(tot.b) + '</b> em vendas, <b>−' + fmtMoney(tot.c) + '</b> de comissão do ML, ' +
+      'sobrando <b>' + fmtMoney(tot.l) + '</b>. ' +
+      '<span class="muted">Não desconta frete pago por você nem o custo do produto — não é lucro.</span>' +
+      (conversao.comissaoIncompleta ? '<br><span class="muted">⚠️ Alguns itens vieram sem comissão na resposta do ML; nesses, o líquido está superestimado.</span>' : '') +
+    '</div>' +
+    '<div class="muted" style="margin-bottom:8px">Ordenado por quanto cada anúncio deixou no período. "Muita visita, pouca venda" = provável problema de preço, foto ou reputação; poucas visitas = problema de posicionamento.</div>' +
+    '<table><thead><tr><th>Anúncio</th><th class="num">Visitas (' + w + 'd)</th><th class="num">Vendas (' + w + 'd)</th>' +
+    '<th class="num">Conversão</th><th class="num">Bruto</th><th class="num">Comissão</th><th class="num">Líquido</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
 function renderPerguntas() {
@@ -334,14 +444,16 @@ async function load(forcar) {
 
   document.getElementById('info').textContent = forcar ? 'atualizando (pode levar um tempo)...' : 'carregando...';
   try {
-    const [cat, perg, conv] = await Promise.all([
+    const [cat, perg, conv, rat] = await Promise.all([
       api('/api/catalog/competition' + (forcar ? '?refresh=1' : '')),
       api('/api/questions/pending' + (forcar ? '?refresh=1' : '')).catch(() => ({ questions: [] })),
       api('/api/conversion' + (forcar ? '?refresh=1' : '')).catch(() => null),
+      api('/api/ratings' + (forcar ? '?refresh=1' : '')).catch(() => null),
     ]);
     data = cat;
     perguntas = perg.questions || [];
     conversao = conv;
+    notas = rat;
     document.getElementById('info').textContent = 'atualizado em ' + fmtHora(data.updatedAt);
     renderCards(); renderInsight(); renderChart(); renderDetail();
   } catch (e) {
