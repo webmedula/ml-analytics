@@ -5,6 +5,7 @@ import { getListingRatings, refreshListingRatings } from '../core/listingRatings
 import { datasDisponiveis, serieDoAnuncio, variacao, vendasPorDia } from '../core/history';
 import { calcularReposicao } from '../core/replenishmentScan';
 import { chaveSku, emparelhar, obterCustos } from '../core/custos';
+import { lerPaginacao, procurarSkuNoTiny } from '../tiny/tinyClient';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import {
   debugItemRaw,
@@ -223,6 +224,19 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
         return 'SKU nao existe no Tiny';
       };
 
+      // Antes de acusar divergencia de cadastro, confirmar que a varredura leu o catalogo inteiro
+      // e perguntar ao Tiny pelos codigos que "nao existem". Errar isso manda o usuario procurar
+      // problema no lugar errado.
+      const paginacao = await lerPaginacao().catch(() => null);
+      const ausentes = lista
+        .filter((l) => {
+          const chave = chaveSku(l.sku);
+          return chave && custos.custos[chave] == null && !custos.semCusto.includes(chave);
+        })
+        .slice(0, 3);
+      const conferencia = [];
+      for (const a of ausentes) conferencia.push(await procurarSkuNoTiny(a.sku!));
+
       const total = lista.length || 1;
       const pct = Math.round((resumo.comCusto / total) * 100);
       let veredicto: string;
@@ -236,16 +250,36 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
         veredicto = `${resumo.comCusto} de ${lista.length} anuncios (${pct}%) tem custo. Cobertura boa pra usar margem como metrica principal.`;
       }
 
+      const totalNoTiny = Number(paginacao?.total ?? paginacao?.totalRegistros ?? NaN);
+      const varreduraCompleta = Number.isFinite(totalNoTiny) ? custos.produtosLidos >= totalNoTiny : null;
+      const achadosNaConferencia = conferencia.filter((c) => c.encontrado).length;
+
+      let alerta: string | null = null;
+      if (varreduraCompleta === false) {
+        alerta =
+          `A varredura leu ${custos.produtosLidos} de ${totalNoTiny} produtos do Tiny. Os "SKU nao existe" ` +
+          'provavelmente sao produtos que eu nao alcancei, nao divergencia de cadastro. Corrigir a leitura antes de mexer em cadastro.';
+      } else if (achadosNaConferencia > 0) {
+        alerta =
+          `${achadosNaConferencia} dos SKUs marcados como ausentes FORAM encontrados perguntando direto ao Tiny. ` +
+          'A varredura esta deixando produto pra tras (filtro ou paginacao) — o problema e meu, nao do seu cadastro.';
+      }
+
       return {
         veredicto,
+        alerta,
         anunciosNaAmostra: lista.length,
         ...resumo,
         custoDoTiny: {
           produtosLidos: custos.produtosLidos,
+          totalNoTiny: Number.isFinite(totalNoTiny) ? totalNoTiny : null,
+          varreduraCompleta,
+          paginacao,
           skusComCusto: Object.keys(custos.custos).length,
           skusSemCusto: custos.semCusto.length,
           atualizadoEm: custos.atualizadoEm,
         },
+        conferenciaDeAusentes: conferencia,
         exemplos: lista.slice(0, 15).map((l) => ({
           itemId: l.itemId,
           titulo: (l.title || '').slice(0, 60),

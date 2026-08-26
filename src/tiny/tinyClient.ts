@@ -113,6 +113,69 @@ export async function listarProdutos(limite = 1000): Promise<Array<{ sku: string
   return out.slice(0, limite);
 }
 
+/**
+ * Quantos produtos o Tiny DIZ que existem, contra quantos eu li.
+ *
+ * Se a varredura parou antes do total, "SKU nao existe no Tiny" nao significa divergencia de
+ * cadastro — significa que eu nao cheguei nele. Sao conclusoes opostas e so este numero separa.
+ */
+export async function lerPaginacao(): Promise<any> {
+  const r = await tinyRequest<any>('/produtos?limit=1&offset=0');
+  return r?.paginacao ?? null;
+}
+
+/**
+ * Procura UM sku direto no Tiny, tentando os nomes de parametro que a API pode aceitar.
+ *
+ * Existe porque a varredura pode nao ter alcancado o produto (paginacao, filtro implicito de
+ * situacao). Perguntar pelo codigo exato responde a pergunta certa: o produto existe no ERP, sim
+ * ou nao? Sem isso eu mandaria o usuario procurar divergencia de cadastro que talvez nem exista.
+ */
+export async function procurarSkuNoTiny(sku: string): Promise<{
+  sku: string;
+  encontrado: boolean;
+  encontradoPor: string | null;
+  custo: number | null;
+  situacao?: string | null;
+  descricao?: string | null;
+  tentativas: Array<{ parametro: string; resultado: string }>;
+}> {
+  const alvo = sku.trim().toUpperCase();
+  const tentativas: Array<{ parametro: string; resultado: string }> = [];
+
+  for (const parametro of ['codigo', 'pesquisa', 'nome']) {
+    try {
+      const r = await tinyRequest<any>(`/produtos?${parametro}=${encodeURIComponent(sku)}&limit=10&offset=0`);
+      const itens = extrairProdutos(r);
+      const casou = itens.find((i) => {
+        const p = i?.produto ?? i ?? {};
+        return String(p.sku ?? p.codigo ?? '').trim().toUpperCase() === alvo;
+      });
+
+      if (casou) {
+        const p = casou?.produto ?? casou ?? {};
+        tentativas.push({ parametro, resultado: 'encontrou' });
+        return {
+          sku,
+          encontrado: true,
+          encontradoPor: parametro,
+          custo: normalizarProduto(casou).custo,
+          situacao: p.situacao ?? null,
+          descricao: p.descricao ?? null,
+          tentativas,
+        };
+      }
+      tentativas.push({ parametro, resultado: `${itens.length} resultado(s), nenhum com o codigo exato` });
+    } catch (err: any) {
+      // Parametro nao aceito devolve erro: e informacao, nao falha. Segue pro proximo.
+      tentativas.push({ parametro, resultado: `erro: ${err?.message || err}` });
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  return { sku, encontrado: false, encontradoPor: null, custo: null, tentativas };
+}
+
 /** Detalhe de um produto. A LISTA do Tiny e resumida; o custo pode existir so aqui. */
 export async function buscarProdutoDetalhe(id: string | number): Promise<any> {
   return tinyRequest<any>(`/produtos/${encodeURIComponent(String(id))}`);
