@@ -7,6 +7,8 @@ import { healthRoutes } from './routes/health';
 import { mlOauthRoutes } from './routes/mlOauth';
 import { catalogRoutes } from './routes/catalog';
 import { tinyOauthRoutes } from './routes/tinyOauth';
+import { telegramRoutes } from './routes/telegram';
+import { dadosRoutes } from './routes/dados';
 
 export function buildServer() {
   const app = Fastify({ logger: false });
@@ -44,6 +46,9 @@ export function buildServer() {
    * proxy), entao vale so pras rotas de diagnostico; /api/ continua exigindo o cabecalho.
    */
   app.addHook('onRequest', async (req, reply) => {
+    // O webhook do Telegram nao passa por aqui: quem chama e o Telegram, que nao manda
+    // cabecalho nosso. A trava dele e o segredo no proprio caminho da rota.
+    if (req.url.startsWith('/telegram/webhook/')) return;
     const ehApi = req.url.startsWith('/api/');
     const ehDebug = req.url.startsWith('/debug/');
     if (!ehApi && !ehDebug) return;
@@ -66,6 +71,8 @@ export function buildServer() {
   app.register(mlOauthRoutes);
   app.register(catalogRoutes);
   app.register(tinyOauthRoutes);
+  app.register(telegramRoutes);
+  app.register(dadosRoutes);
 
   app.setErrorHandler((err, _req, reply) => {
     logger.error('Erro nao tratado:', err.message, err.stack);

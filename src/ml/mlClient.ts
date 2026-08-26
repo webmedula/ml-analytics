@@ -292,6 +292,21 @@ export interface LinhaDePedido {
   itemId: string;
   valor: number;
   dentro7: boolean;
+
+  // --- campos que so servem pro armazenamento permanente ---
+  // A varredura enxerga uma janela movel de 30 dias; guardar a LINHA do pedido, com id e data,
+  // transforma isso em historico de verdade — e sem chamada extra, porque o pedido ja veio inteiro.
+  /** id do pedido: junto com itemId, e a chave que evita gravar a mesma venda duas vezes */
+  orderId?: string;
+  dataCriacao?: string;
+  status?: string;
+  /** o ML manda o SKU dentro do item do pedido — de graca, sem consultar o anuncio */
+  sku?: string | null;
+  titulo?: string | null;
+  quantidade?: number;
+  precoUnitario?: number;
+  /** comissao POR UNIDADE, como o ML informa. null quando o pedido veio sem sale_fee. */
+  saleFee?: number | null;
 }
 
 function vazio(): VendasDoAnuncio {
@@ -357,7 +372,17 @@ export async function getSalesByItem(dias = 30): Promise<{ porItem: Map<string, 
           cur.comissaoD7 += comissao;
         }
         out.set(id, cur);
-        linhas.push({ shipmentId, itemId: id, valor: bruto, dentro7 });
+        linhas.push({
+          shipmentId, itemId: id, valor: bruto, dentro7,
+          orderId: String(o.id),
+          dataCriacao: o.date_created,
+          status: String(o.status ?? ''),
+          sku: it?.item?.seller_sku ?? it?.item?.seller_custom_field ?? null,
+          titulo: it?.item?.title ?? null,
+          quantidade: qtd,
+          precoUnitario: preco,
+          saleFee: temFee ? Number(it.sale_fee) : null,
+        });
       }
     }
     offset += limit;

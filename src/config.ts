@@ -5,7 +5,7 @@ const dataDir = process.env.DATA_DIR || './data';
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v23 (2026-08-26)',
+  appVersion: 'analytics v27 (2026-08-26)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -48,6 +48,34 @@ export const config = {
   /** Por quanto tempo o custo lido do Tiny e considerado valido. Custo muda pouco; cada consulta
    * e uma chamada ao ERP, e menos renovacao de token = menos risco de conflito. */
   custosValidadeHoras: Number(process.env.CUSTOS_VALIDADE_HORAS || 24),
+
+  // --- assistente (Telegram) ---
+  /** 'anthropic' | 'openrouter'. Vazio = usa a chave que estiver configurada. */
+  assistenteProvedor: process.env.ASSISTENTE_PROVEDOR || '',
+  /** Id do modelo. Vazio funciona na Anthropic (ela pergunta a API); no OpenRouter e obrigatorio,
+   * porque o catalogo tem centenas de modelos com precos e capacidades muito diferentes. */
+  assistenteModelo: process.env.ASSISTENTE_MODELO || process.env.ANTHROPIC_MODEL || '',
+
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+  anthropicBaseUrl: (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, ''),
+  anthropicVersion: process.env.ANTHROPIC_VERSION || '2023-06-01',
+
+  openrouterApiKey: process.env.OPENROUTER_API_KEY || '',
+  openrouterBaseUrl: (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/+$/, ''),
+  /** Teto de idas e voltas com ferramentas numa pergunta. Segura pergunta que nao converge. */
+  assistenteMaxPassos: Number(process.env.ASSISTENTE_MAX_PASSOS || 6),
+  assistenteMaxTokens: Number(process.env.ASSISTENTE_MAX_TOKENS || 1500),
+
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  /** Segredo no CAMINHO do webhook: sem ele o Telegram nem alcanca a rota. */
+  telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || '',
+  /** Quem pode conversar com o bot. VAZIO = ninguem (o bot so informa o proprio chat id). */
+  telegramChatIds: (process.env.TELEGRAM_CHAT_IDS || '').split(',').map((s) => s.trim()).filter(Boolean),
+  /** Endereco publico deste servico — usado pra registrar o webhook no Telegram. */
+  baseUrl: (process.env.BASE_URL || '').replace(/\/+$/, ''),
+
+  /** De quanto em quanto tempo a base local e alimentada com o que as varreduras acharam. */
+  sincronizacaoIntervaloHoras: Number(process.env.SINCRONIZACAO_INTERVALO_HORAS || 6),
 
   // --- serie diaria (historico) ---
   /** Quantos dias de historico manter. 400 cobre um ano e a comparacao com o mesmo mes anterior. */

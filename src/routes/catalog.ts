@@ -7,6 +7,7 @@ import { calcularReposicao } from '../core/replenishmentScan';
 import { chaveSku, emparelhar, obterCustos } from '../core/custos';
 import { lacunasParaCsv } from '../core/margem';
 import { getMargem, refreshMargem } from '../core/margemScan';
+import { montarIndice, sugerirCorrespondencia } from '../core/skuMatch';
 import { lerPaginacao, procurarSkuNoTiny } from '../tiny/tinyClient';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import {
@@ -209,6 +210,56 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao calcular margem' };
+    }
+  });
+
+  /**
+   * SUGESTOES de correspondencia pros SKUs que nao existem no Tiny. Nao altera nada em lugar
+   * nenhum: devolve o par proposto, o motivo e a confianca, pra pessoa confirmar. Aplicar sozinho
+   * um custo de outro produto seria erro invisivel — nao da erro, so estraga a margem.
+   */
+  app.get('/debug/sugestoes-sku', async (_req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado.' };
+    }
+    try {
+      const r = getMargem() ?? (await refreshMargem());
+      const custos = await obterCustos();
+      const indice = montarIndice([...Object.keys(custos.custos), ...custos.semCusto], custos.custos);
+
+      const divergentes = r.anuncios.filter((a) => a.estado === 'fora_do_tiny' && a.sku);
+      const sugestoes = divergentes.map((a) => {
+        const s = sugerirCorrespondencia(a.sku!, indice);
+        return {
+          itemId: a.itemId,
+          titulo: a.titulo.slice(0, 60),
+          liquido: a.liquido,
+          ...(s ?? {
+            skuDoMl: a.sku!,
+            skuSugerido: null,
+            custo: null,
+            confianca: null,
+            motivo: 'Nenhuma correspondencia plausivel no Tiny.',
+          }),
+        };
+      });
+
+      const porConfianca = (c: string) => sugestoes.filter((s) => s.confianca === c).length;
+      const dinheiro = (c: string) =>
+        Math.round(sugestoes.filter((s) => s.confianca === c).reduce((t, s) => t + s.liquido, 0) * 100) / 100;
+
+      return {
+        veredicto:
+          `${porConfianca('alta')} correspondencia(s) de confianca alta, ${porConfianca('media')} media, ` +
+          `${porConfianca('baixa')} baixa, ${sugestoes.filter((s) => !s.skuSugerido).length} sem sugestao. ` +
+          'Nada foi alterado — confira antes de aplicar.',
+        liquidoDestravavel: { alta: dinheiro('alta'), media: dinheiro('media'), baixa: dinheiro('baixa') },
+        sugestoes: sugestoes.sort((a, b) => b.liquido - a.liquido),
+      };
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro ao sugerir correspondencias' };
     }
   });
 
