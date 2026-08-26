@@ -137,6 +137,28 @@ export function abrirBanco(): DatabaseSync {
   return db;
 }
 
+/**
+ * O banco esta utilizavel? Devolve o motivo quando nao — sem lancar excecao.
+ *
+ * Existe pra /health poder responder, e pro servidor subir mesmo se o SQLite faltar. Derrubar o
+ * boot por causa disso deixaria o servico inteiro fora do ar por um recurso que so parte das rotas
+ * usa — e, num painel onde o deploy e manual, trocaria um problema visivel por um servico morto.
+ */
+export function estadoDoBanco(): { disponivel: boolean; caminho: string; node: string; motivo?: string; vendas?: number } {
+  try {
+    const banco = abrirBanco();
+    const n = banco.prepare('SELECT COUNT(*) AS n FROM vendas').all() as Array<{ n: number }>;
+    return { disponivel: true, caminho: caminhoDoBanco(), node: process.version, vendas: n[0]?.n ?? 0 };
+  } catch (err: any) {
+    return {
+      disponivel: false,
+      caminho: caminhoDoBanco(),
+      node: process.version,
+      motivo: err?.message || String(err),
+    };
+  }
+}
+
 export function fecharBanco(): void {
   db?.close();
   db = null;
