@@ -4,7 +4,7 @@
   "description": "Analises de mercado do Mercado Livre (catalogo/Buy Box e futuras), via API v2/OAuth2. Servico separado do tiny-pedidos-nf.",
   "main": "dist/index.js",
   "engines": {
-    "node": ">=22"
+    "node": ">=20"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
