@@ -68,7 +68,13 @@ export function normalizarProduto(bruto: any): { sku: string | null; descricao: 
   const p = bruto?.produto ?? bruto ?? {};
   const sku = p.sku ?? p.codigo ?? null;
 
-  const candidatos = [p.precoCusto, p.preco_custo, p.precoCustoMedio, p.preco_custo_medio, p.custo];
+  // O custo vem ANINHADO em `precos` na v3 (`precos.precoCusto`). Procurar so na raiz devolvia
+  // undefined e virava "sem custo" — bug que sobreviveria calado ate alguem confiar na margem.
+  const precos = p.precos ?? {};
+  const candidatos = [
+    p.precoCusto, p.preco_custo, p.precoCustoMedio, p.preco_custo_medio, p.custo,
+    precos.precoCusto, precos.preco_custo, precos.precoCustoMedio, precos.preco_custo_medio, precos.custo,
+  ];
   let custo: number | null = null;
   for (const c of candidatos) {
     const n = typeof c === 'string' ? Number(c.replace(',', '.')) : Number(c);
@@ -107,9 +113,40 @@ export async function listarProdutos(limite = 1000): Promise<Array<{ sku: string
   return out.slice(0, limite);
 }
 
+/** Detalhe de um produto. A LISTA do Tiny e resumida; o custo pode existir so aqui. */
+export async function buscarProdutoDetalhe(id: string | number): Promise<any> {
+  return tinyRequest<any>(`/produtos/${encodeURIComponent(String(id))}`);
+}
+
+/**
+ * Varre um objeto inteiro atras de QUALQUER campo cujo nome fale em custo, e devolve onde achou.
+ *
+ * Feito assim de proposito: eu nao sei o nome exato que o Tiny usa no detalhe, e chutar nome de
+ * campo foi justamente o que produziu o veredicto duvidoso da lista. Procurar por padrao no nome
+ * mostra o que existe de verdade, inclusive campos aninhados que eu nao teria adivinhado.
+ */
+export function procurarCamposDeCusto(raiz: any, prefixo = '', achados: Array<{ campo: string; valor: unknown }> = []): Array<{ campo: string; valor: unknown }> {
+  if (!raiz || typeof raiz !== 'object' || achados.length >= 40) return achados;
+
+  for (const [chave, valor] of Object.entries(raiz)) {
+    const caminho = prefixo ? `${prefixo}.${chave}` : chave;
+    if (/cust/i.test(chave) && (typeof valor === 'number' || typeof valor === 'string')) {
+      achados.push({ campo: caminho, valor });
+    } else if (valor && typeof valor === 'object') {
+      // Array grande (ex.: variacoes) so entra nos primeiros itens: o objetivo e amostrar, nao listar.
+      const filhos = Array.isArray(valor) ? valor.slice(0, 3) : [valor];
+      for (const filho of filhos) procurarCamposDeCusto(filho, caminho, achados);
+    }
+  }
+  return achados;
+}
+
 /**
  * DIAGNOSTICO: antes de construir a margem, confirma que existe custo pra construir em cima.
- * Devolve a primeira pagina crua e o resumo do que foi encontrado.
+ *
+ * Olha a lista E o detalhe de alguns produtos. A distincao importa muito: se o custo so aparece no
+ * detalhe, o problema e meu (endpoint errado) e a Fase 2 muda de desenho — uma chamada por SKU, com
+ * cache. Se nem o detalhe tem custo, ai sim e cadastro, e nao ha o que programar.
  */
 export async function diagnosticarTiny(): Promise<any> {
   const resposta = await tinyRequest<any>('/produtos?limit=20&offset=0');
@@ -117,19 +154,49 @@ export async function diagnosticarTiny(): Promise<any> {
   const normalizados = itens.map(normalizarProduto);
 
   const comSku = normalizados.filter((p) => p.sku).length;
-  const comCusto = normalizados.filter((p) => p.custo != null).length;
+  const comCustoNaLista = normalizados.filter((p) => p.custo != null).length;
+
+  // Detalhe de ate 3 produtos da amostra.
+  const detalhes: Array<{ id: unknown; sku: string | null; camposDeCusto: Array<{ campo: string; valor: unknown }>; erro?: string }> = [];
+  let comCustoNoDetalhe = 0;
+  let detalheCru: any = null;
+
+  for (const item of itens.slice(0, 3)) {
+    const p = item?.produto ?? item ?? {};
+    const id = p.id ?? p.idProduto ?? null;
+    if (id == null) continue;
+    try {
+      const detalhe = await buscarProdutoDetalhe(id);
+      const corpo = detalhe?.produto ?? detalhe ?? {};
+      if (detalheCru == null) detalheCru = corpo;
+      const campos = procurarCamposDeCusto(corpo);
+      const temValor = campos.some(({ valor }) => {
+        const n = typeof valor === 'string' ? Number(valor.replace(',', '.')) : Number(valor);
+        return Number.isFinite(n) && n > 0;
+      });
+      if (temValor) comCustoNoDetalhe++;
+      detalhes.push({ id, sku: p.sku ?? null, camposDeCusto: campos });
+    } catch (err: any) {
+      detalhes.push({ id, sku: p.sku ?? null, camposDeCusto: [], erro: err?.message || String(err) });
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
 
   let veredicto: string;
   if (itens.length === 0) {
     veredicto = 'A API respondeu, mas nao reconheci nenhum produto no formato da resposta. Veja `amostraCrua` pra ajustar a leitura.';
-  } else if (comCusto === 0) {
+  } else if (comCustoNaLista > 0) {
+    veredicto = `${comCustoNaLista} de ${itens.length} produtos ja trazem custo na propria lista. Da pra construir a margem lendo so a lista.`;
+  } else if (comCustoNoDetalhe > 0) {
     veredicto =
-      'Nenhum dos produtos da amostra tem custo preenchido. Sem custo no Tiny nao ha margem a calcular — ' +
-      'o problema estaria no cadastro, nao na integracao.';
-  } else if (comCusto < itens.length / 2) {
-    veredicto = `Só ${comCusto} de ${itens.length} produtos da amostra tem custo. A margem vai existir, mas incompleta.`;
+      `A lista vem sem custo, mas ${comCustoNoDetalhe} de ${detalhes.length} produtos TEM custo no detalhe. ` +
+      'O custo existe no cadastro; o que estava errado era eu ler so a lista. Veja `detalhes[].camposDeCusto` pro nome do campo.';
+  } else if (detalhes.length === 0) {
+    veredicto = 'Nao consegui identificar o id dos produtos pra consultar o detalhe. Veja `amostraCrua`.';
   } else {
-    veredicto = `${comCusto} de ${itens.length} produtos com custo preenchido. Da pra construir a margem.`;
+    veredicto =
+      'Nem a lista nem o detalhe trazem custo em nenhum campo. O custo nao esta cadastrado no Tiny — ' +
+      'nao ha margem a calcular ate isso mudar.';
   }
 
   return {
@@ -137,8 +204,11 @@ export async function diagnosticarTiny(): Promise<any> {
     chavesDoTopo: resposta && typeof resposta === 'object' ? Object.keys(resposta) : null,
     produtosNaAmostra: itens.length,
     comSku,
-    comCusto,
+    comCustoNaLista,
+    comCustoNoDetalhe,
     exemplos: normalizados.slice(0, 5),
-    amostraCrua: itens.slice(0, 2),
+    detalhes,
+    amostraCrua: itens.slice(0, 1),
+    detalheCru,
   };
 }

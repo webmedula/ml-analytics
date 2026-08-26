@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extrairProdutos, normalizarProduto } from './tinyClient';
+import { extrairProdutos, normalizarProduto, procurarCamposDeCusto } from './tinyClient';
 
 describe('extrairProdutos', () => {
   it('aceita as formas que o Tiny ja usou pra devolver lista', () => {
@@ -46,5 +46,41 @@ describe('normalizarProduto', () => {
   it('cai no codigo quando nao ha sku, e limpa espacos', () => {
     expect(normalizarProduto({ codigo: '  FORMAGELO ' }).sku).toBe('FORMAGELO');
     expect(normalizarProduto({ precoCusto: 5 }).sku).toBeNull();
+  });
+
+  // Formato real observado na conta: o custo nao esta na raiz, esta dentro de `precos`.
+  it('le o custo aninhado em precos, que e como a v3 devolve de verdade', () => {
+    const real = {
+      sku: 'RL-6003',
+      descricao: 'ROLAMENTO MCS 6003-2RS',
+      precos: { preco: 3.7, precoPromocional: 0, precoCusto: 1.85, precoCustoMedio: 0 },
+    };
+    expect(normalizarProduto(real).custo).toBe(1.85);
+    expect(normalizarProduto(real).sku).toBe('RL-6003');
+  });
+
+  it('precos com tudo zerado continua sendo ausencia de custo', () => {
+    expect(normalizarProduto({ sku: 'A', precos: { preco: 3.7, precoCusto: 0, precoCustoMedio: 0 } }).custo).toBeNull();
+  });
+});
+
+describe('procurarCamposDeCusto', () => {
+  it('acha campos de custo em qualquer profundidade', () => {
+    const achados = procurarCamposDeCusto({
+      sku: 'A',
+      precos: { preco: 10, precoCusto: 4.5 },
+      fornecedor: { custoUltimaCompra: '6,20' },
+    });
+    const campos = achados.map((a) => a.campo);
+    expect(campos).toContain('precos.precoCusto');
+    expect(campos).toContain('fornecedor.custoUltimaCompra');
+    expect(campos).not.toContain('precos.preco');
+  });
+
+  it('nao estoura com null, ciclo ou lista grande', () => {
+    expect(procurarCamposDeCusto(null)).toEqual([]);
+    const ciclico: any = { precos: { precoCusto: 1 } };
+    ciclico.self = ciclico;
+    expect(() => procurarCamposDeCusto(ciclico)).not.toThrow();
   });
 });
