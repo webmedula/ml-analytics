@@ -5,6 +5,8 @@ import { getListingRatings, refreshListingRatings } from '../core/listingRatings
 import { datasDisponiveis, serieDoAnuncio, variacao, vendasPorDia } from '../core/history';
 import { calcularReposicao } from '../core/replenishmentScan';
 import { chaveSku, emparelhar, obterCustos } from '../core/custos';
+import { lacunasParaCsv } from '../core/margem';
+import { getMargem, refreshMargem } from '../core/margemScan';
 import { lerPaginacao, procurarSkuNoTiny } from '../tiny/tinyClient';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import {
@@ -191,6 +193,44 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao ler o pedido' };
+    }
+  });
+
+  /** Margem + lacunas de cadastro, por anuncio. Serve o cache; ?refresh=1 força a varredura. */
+  app.get('/api/margem', async (req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado. Acesse /oauth/ml/login para conectar.' };
+    }
+    const { refresh } = req.query as { refresh?: string };
+    try {
+      if (refresh === '1') return await refreshMargem();
+      return getMargem() ?? (await refreshMargem());
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro ao calcular margem' };
+    }
+  });
+
+  /**
+   * A lista de lacunas em CSV. Cadastro se corrige em planilha, com filtro e varias abas abertas —
+   * nao rolando um dashboard. Protegida como as demais rotas de diagnostico (use ?key=).
+   */
+  app.get('/debug/lacunas.csv', async (req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado.' };
+    }
+    const { estado } = req.query as { estado?: string };
+    try {
+      const r = getMargem() ?? (await refreshMargem());
+      const lista = estado ? r.anuncios.filter((a) => a.estado === estado) : r.anuncios;
+      reply.header('content-type', 'text/csv; charset=utf-8');
+      reply.header('content-disposition', 'attachment; filename="lacunas-cadastro.csv"');
+      return lacunasParaCsv(lista);
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro ao gerar o CSV' };
     }
   });
 
