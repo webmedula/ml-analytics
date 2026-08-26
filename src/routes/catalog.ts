@@ -4,10 +4,13 @@ import { getConversion, refreshConversion } from '../core/conversion';
 import { getListingRatings, refreshListingRatings } from '../core/listingRatings';
 import { datasDisponiveis, serieDoAnuncio, variacao, vendasPorDia } from '../core/history';
 import { calcularReposicao } from '../core/replenishmentScan';
+import { chaveSku, emparelhar, obterCustos } from '../core/custos';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import {
   debugItemRaw,
   diagnosticarSaleFee,
+  getItemsSkus,
+  getSellerItemIds,
   getUltimoPedidoBruto,
   getUnansweredQuestions,
   MlQuestion,
@@ -187,6 +190,74 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao ler o pedido' };
+    }
+  });
+
+  /**
+   * SONDA DE MARGEM: cruza os anuncios ativos do ML com o custo do Tiny e diz, em numero, quantos
+   * anuncios teriam margem calculavel. E o que decide se vale construir a coluna de margem — e, se
+   * nao valer, aponta exatamente onde esta o buraco: SKU faltando no anuncio, SKU divergente entre
+   * os sistemas, ou custo nao cadastrado. Somente leitura nos dois lados.
+   */
+  app.get('/debug/margem', async (req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado.' };
+    }
+    const { itens } = req.query as { itens?: string };
+    const max = Math.min(500, Math.max(5, Number(itens) || 60));
+
+    try {
+      const ids = await getSellerItemIds(max, false);
+      const skus = await getItemsSkus(ids);
+      const custos = await obterCustos();
+
+      const lista = [...skus.entries()].map(([itemId, s]) => ({ itemId, ...s }));
+      const resumo = emparelhar(lista.map((l) => l.sku), custos.custos, custos.semCusto);
+
+      const estado = (sku: string | null): string => {
+        const chave = chaveSku(sku);
+        if (!chave) return 'sem SKU no anuncio';
+        if (custos.custos[chave] != null) return 'com custo';
+        if (custos.semCusto.includes(chave)) return 'sem custo no Tiny';
+        return 'SKU nao existe no Tiny';
+      };
+
+      const total = lista.length || 1;
+      const pct = Math.round((resumo.comCusto / total) * 100);
+      let veredicto: string;
+      if (resumo.comCusto === 0) {
+        veredicto =
+          'Nenhum anuncio da amostra fecha custo. Antes de construir margem, resolver o elo que estiver zerado ' +
+          'abaixo: sem SKU = preencher no anuncio; SKU nao existe = os codigos divergem entre ML e Tiny; sem custo = cadastro.';
+      } else if (pct < 50) {
+        veredicto = `${resumo.comCusto} de ${lista.length} anuncios (${pct}%) tem custo. Da pra construir a margem, mas ela vai aparecer em menos da metade dos anuncios — o painel precisa dizer quando o numero nao existe, em vez de mostrar margem cheia.`;
+      } else {
+        veredicto = `${resumo.comCusto} de ${lista.length} anuncios (${pct}%) tem custo. Cobertura boa pra usar margem como metrica principal.`;
+      }
+
+      return {
+        veredicto,
+        anunciosNaAmostra: lista.length,
+        ...resumo,
+        custoDoTiny: {
+          produtosLidos: custos.produtosLidos,
+          skusComCusto: Object.keys(custos.custos).length,
+          skusSemCusto: custos.semCusto.length,
+          atualizadoEm: custos.atualizadoEm,
+        },
+        exemplos: lista.slice(0, 15).map((l) => ({
+          itemId: l.itemId,
+          titulo: (l.title || '').slice(0, 60),
+          sku: l.sku,
+          origemDoSku: l.origem,
+          estado: estado(l.sku),
+          custo: chaveSku(l.sku) ? custos.custos[chaveSku(l.sku)!] ?? null : null,
+        })),
+      };
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro na sonda de margem' };
     }
   });
 

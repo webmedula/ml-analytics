@@ -139,6 +139,66 @@ export async function getItemsAttributes(ids: string[]): Promise<MlItemAttribute
   return out;
 }
 
+/**
+ * SKU do anuncio — a unica ponte entre o anuncio no ML e o custo no Tiny.
+ *
+ * O ML guarda isso em tres lugares diferentes, por camadas historicas: `seller_custom_field` (o
+ * campo antigo), o atributo `SELLER_SKU` (o atual), e dentro de cada variacao quando o anuncio tem
+ * variacoes. Funcao pura pra poder testar sem rede: errar aqui nao daria erro, daria margem em
+ * branco no anuncio errado.
+ */
+export function extrairSku(item: any): { sku: string | null; origem: string | null } {
+  const limpar = (v: unknown): string | null => {
+    const s = typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '';
+    return s.length > 0 ? s : null;
+  };
+
+  const atributo = (lista: any[] | undefined, id: string): string | null => {
+    if (!Array.isArray(lista)) return null;
+    const a = lista.find((x) => x?.id === id);
+    return limpar(a?.value_name ?? a?.values?.[0]?.name);
+  };
+
+  const doAtributo = atributo(item?.attributes, 'SELLER_SKU');
+  if (doAtributo) return { sku: doAtributo, origem: 'attributes.SELLER_SKU' };
+
+  const doCampo = limpar(item?.seller_custom_field);
+  if (doCampo) return { sku: doCampo, origem: 'seller_custom_field' };
+
+  // Variacoes: pega a PRIMEIRA que tiver SKU, e marca a origem pra ficar claro que o anuncio tem
+  // mais de um SKU e um custo unico nao representa o anuncio inteiro.
+  const variacoes = Array.isArray(item?.variations) ? item.variations : [];
+  for (const v of variacoes) {
+    const doVar = atributo(v?.attributes, 'SELLER_SKU') ?? limpar(v?.seller_custom_field);
+    if (doVar) {
+      return { sku: doVar, origem: variacoes.length > 1 ? 'variacoes (multiplos SKUs)' : 'variacoes' };
+    }
+  }
+
+  return { sku: null, origem: null };
+}
+
+/** Multiget so dos campos onde o SKU pode estar. Devolve itemId -> sku + de onde veio. */
+export async function getItemsSkus(ids: string[]): Promise<Map<string, { sku: string | null; origem: string | null; title?: string }>> {
+  const attrs = 'id,title,seller_custom_field,attributes,variations';
+  const out = new Map<string, { sku: string | null; origem: string | null; title?: string }>();
+
+  for (let i = 0; i < ids.length; i += 20) {
+    const chunk = ids.slice(i, i + 20);
+    const data = await mlRequest<Array<{ code: number; body: any }>>(
+      `/items?ids=${chunk.join(',')}&attributes=${attrs}`,
+    );
+    for (const entry of data || []) {
+      if (entry?.code === 200 && entry.body?.id) {
+        const { sku, origem } = extrairSku(entry.body);
+        out.set(entry.body.id, { sku, origem, title: entry.body.title });
+      }
+    }
+  }
+
+  return out;
+}
+
 /** Apelido (nickname) publico de um vendedor no Mercado Livre — usado pra mostrar QUEM ganhou o Buy Box. */
 export async function getSellerNickname(sellerId: number): Promise<string | null> {
   try {
