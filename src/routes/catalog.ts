@@ -1,11 +1,13 @@
 import { FastifyInstance } from 'fastify';
+import { config } from '../config';
 import { getCatalogCompetition, refreshCatalogCompetition } from '../core/catalogCompetition';
 import { getConversion, refreshConversion } from '../core/conversion';
 import { getListingRatings, refreshListingRatings } from '../core/listingRatings';
 import { datasDisponiveis, serieDoAnuncio, variacao, vendasPorDia } from '../core/history';
 import { calcularReposicao } from '../core/replenishmentScan';
 import { chaveSku, emparelhar, obterCustos } from '../core/custos';
-import { lacunasParaCsv } from '../core/margem';
+import { lacunasParaCsv, margemDaVenda } from '../core/margem';
+import { montarFila, resumirFila } from '../core/filaRecriacao';
 import { getMargem, refreshMargem } from '../core/margemScan';
 import { montarIndice, sugerirCorrespondencia } from '../core/skuMatch';
 import { lerPaginacao, procurarSkuNoTiny } from '../tiny/tinyClient';
@@ -194,6 +196,55 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao ler o pedido' };
+    }
+  });
+
+  /**
+   * FILA DE RECRIACAO: os anuncios de nota baixa, com o veredicto tecnico E o dinheiro lado a lado,
+   * na ordem em que vale trabalhar. Junta a varredura de notas com a de margem — as duas ja existem;
+   * o que faltava era cruzar, porque "recriar zera?" e "compensa recriar?" sao perguntas diferentes.
+   */
+  app.get('/api/fila', async (req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado. Acesse /oauth/ml/login para conectar.' };
+    }
+
+    const notas = getListingRatings();
+    if (!notas) {
+      reply.code(409);
+      return { mensagem: 'A varredura de notas ainda nao rodou. Ela roda em background apos conectar.' };
+    }
+
+    try {
+      const m = getMargem() ?? (await refreshMargem());
+      const dinheiro = new Map(
+        m.anuncios.map((a) => [
+          a.itemId,
+          {
+            liquido: a.liquido,
+            unidades: a.unidades,
+            margem: margemDaVenda(a.liquido, a.custo, a.unidades).margem,
+          },
+        ]),
+      );
+
+      // So entram os que estao abaixo do limite: e a fila de trabalho, nao o catalogo inteiro.
+      const abaixo = notas.items.filter(
+        (i) => i.nota != null && i.nota < config.ratingsMinScore && (i.totalAvaliacoes ?? 0) >= config.ratingsMinReviews,
+      );
+
+      const fila = montarFila(abaixo as any, dinheiro, config.ratingsMinScore);
+      return {
+        criterio: `nota abaixo de ${config.ratingsMinScore} com pelo menos ${config.ratingsMinReviews} opinioes`,
+        atualizadoEm: notas.updatedAt ?? null,
+        resumo: resumirFila(fila),
+        itens: fila,
+        nota: 'liquidoEmRisco e o faturamento liquido de 30 dias do anuncio — o que a recriacao poe em risco, nao um prejuizo.',
+      };
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro ao montar a fila' };
     }
   });
 

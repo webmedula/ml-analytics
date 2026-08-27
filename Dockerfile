@@ -1,13 +1,10 @@
-# IMAGEM BASE — deliberadamente a mesma que ja subia antes.
+# Node 24: e onde node:sqlite existe sem flag experimental. A alternativa (better-sqlite3) exige
+# compilacao nativa dentro da alpine, com toolchain nas duas etapas do build.
 #
-# A v27 trocou pra node:24 por causa do node:sqlite (SQLite nativo, sem dependencia compilada). O
-# deploy parou de subir exatamente nessa versao, e a imagem base e a unica coisa que ela mudou fora
-# do codigo. Voltar isola a causa: se subir agora, era a imagem; se nao subir, o problema esta no
-# build ou no upload, e nao adianta mexer em codigo.
-#
-# Com Node 20 nao existe node:sqlite: o servico sobe e funciona, e /health informa o banco como
-# indisponivel. Nada mais depende dele.
-FROM node:20-alpine AS build
+# Chegamos a suspeitar desta linha quando quatro versoes seguidas nao subiam. Nao era ela: o deploy
+# passa por GitHub Actions -> ghcr.io, e o EasyPanel estava servindo uma imagem antiga. A v28
+# construiu e rodou nesta base sem nenhum problema.
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install
@@ -15,7 +12,7 @@ COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json* ./

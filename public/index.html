@@ -145,6 +145,7 @@ let data = null;        // resultado do /api/catalog/competition
 let perguntas = [];     // perguntas sem resposta
 let conversao = null;   // resultado do /api/conversion
 let notas = null;       // resultado do /api/ratings (diagnostico de nota por anuncio)
+let fila = null;        // resultado do /api/fila (nota baixa + dinheiro + acao recomendada)
 let janelaConv = '30';  // janela da conversao exibida: '30' ou '7'
 let filtro = 'perdendo';
 let estoqueLimite = 5;
@@ -410,48 +411,75 @@ const VEREDITO = {
   sem_dados: 'sem dados',
 };
 
+const ACAO = {
+  recriar:                { rotulo: 'recriar', cor: 'var(--green)' },
+  recriar_com_cautela:    { rotulo: 'recriar com cautela', cor: 'var(--amber, #d79a2b)' },
+  recuperar_por_avaliacao:{ rotulo: 'recuperar por avaliação', cor: 'var(--green)' },
+  sondar:                 { rotulo: 'sondar antes', cor: 'var(--text-dim)' },
+  nao_recriar:            { rotulo: 'não recriar', cor: 'var(--red)' },
+};
+
+/**
+ * FILA DE RECRIAÇÃO.
+ *
+ * Antes esta tela respondia "recriar zera a nota?". Só que zerar e compensar são perguntas
+ * diferentes: recriar joga fora histórico, posicionamento e as avaliações boas. Agora o dinheiro
+ * que o anúncio movimenta aparece ao lado do veredicto, e a ordem já é a ordem de trabalho.
+ */
 function renderNotas() {
   if (!notas) return '<div class="muted" style="padding:16px 0; text-align:center">A varredura de notas roda em background após conectar ao Mercado Livre.</div>';
   if (!apiNotasOk()) {
     return '<div class="insight">⚠️ Nenhum anúncio devolveu nota: o aplicativo do Mercado Livre usado por este serviço não tem acesso ao recurso de opiniões. ' +
       'Sem isso não dá para detectar nota baixa pela API — é preciso liberar a permissão no app em developers.mercadolivre.com.br (ou levantar a nota por outra fonte).</div>';
   }
-  const grupo = notasBaixas();
-  const r = notas.resumo || {};
-  const resumo = '<div class="muted" style="margin-bottom:10px">' +
-    'Limite: nota &lt; ' + limiteNota() + ' com pelo menos ' + notas.minOpinioes + ' opiniões. ' +
-    'De ' + notas.totalAnalisados + ' anúncios ativos: <b>' + (r.recriavel || 0) + '</b> onde recriar zera a nota, ' +
-    '<b>' + (r.depende_do_user_product || 0) + '</b> onde a opinião é só sua mas depende do produto do usuário, ' +
-    '<b>' + (r.preso_ao_catalogo || 0) + '</b> onde a opinião pertence ao catálogo (recriar não adianta) e ' +
-    '<b>' + (r.indefinido || 0) + '</b> sem evidência suficiente.' +
-    (notas.truncado ? ' <b>Atenção:</b> a varredura parou no teto — há anúncios não analisados.' : '') +
-    '</div>';
+  if (!fila) return '<div class="muted" style="padding:16px 0; text-align:center">A fila ainda não carregou. Atualize a página.</div>';
+  if (!fila.itens || fila.itens.length === 0) {
+    return '<div class="muted" style="padding:16px 0; text-align:center">Nenhum anúncio com nota abaixo do limite 🎉</div>';
+  }
 
-  if (grupo.length === 0) return resumo + '<div class="muted" style="padding:16px 0; text-align:center">Nenhum anúncio com nota abaixo do limite 🎉</div>';
+  const r = fila.resumo || {};
+  const c = r.porAcao || {};
+  const resumo = '<div class="insight">' +
+    '<b>' + r.total + '</b> anúncio(s) abaixo do limite. ' +
+    'Em <b>' + fmtMoney(r.liquidoAcionavel) + '</b> de faturamento há o que fazer; ' +
+    '<b>' + fmtMoney(r.liquidoSemSaida) + '</b> está preso ao catálogo, onde recriar não zera nada.' +
+    '<div class="muted" style="margin-top:6px">' +
+      (c.recriar || 0) + ' para recriar · ' +
+      (c.recriar_com_cautela || 0) + ' com cautela · ' +
+      (c.recuperar_por_avaliacao || 0) + ' resolvem com avaliação · ' +
+      (c.sondar || 0) + ' precisam de sondagem · ' +
+      (c.nao_recriar || 0) + ' sem saída' +
+    '</div></div>';
 
-  const rows = grupo.map(i => {
-    const nome = i.permalink ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.title || i.itemId) + '</a>' : esc(i.title || i.itemId);
+  const rows = fila.itens.map(i => {
+    const nome = i.permalink
+      ? '<a href="' + i.permalink + '" target="_blank" rel="noopener">' + esc(i.titulo) + '</a>'
+      : esc(i.titulo);
     const nota = i.nota == null ? '—' : '<span style="color:var(--red)">' + i.nota.toFixed(1).replace('.', ',') + ' ★</span>';
-    const pool = i.chaveDoPool
-      ? esc(i.chaveDoPool) + '<div class="muted">' + (/^[A-Z]{3}U\d+$/.test(i.chaveDoPool) ? 'produto do usuário' : 'catálogo compartilhado') + '</div>'
-      : '—';
+    const a = ACAO[i.acao] || { rotulo: i.acao, cor: 'var(--text-dim)' };
+    const alternativa = i.avaliacoesParaRecuperar == null
+      ? '<span class="muted">—</span>'
+      : i.avaliacoesParaRecuperar + ' nota(s) 5';
+
     return '<tr>' +
-      '<td class="title-cell">' + nome + '<div class="muted">' + i.itemId + (i.catalogListing ? ' · catálogo' : '') + '</div></td>' +
+      '<td class="title-cell">' + nome +
+        '<div class="muted">' + i.itemId + '</div></td>' +
       '<td class="num">' + nota + '</td>' +
-      '<td class="num">' + (i.totalAvaliacoes ?? '—') + '</td>' +
-      '<td>' + pool + '</td>' +
-      '<td><span class="tag ' + i.classificacao + '">' + (VEREDITO[i.classificacao] || i.classificacao) + '</span>' +
-        '<div class="muted evid" style="margin-top:4px">' + esc(i.evidencia) + '</div></td>' +
-      '<td class="num">' + (i.vendidos ?? '—') + '</td>' +
-      '<td class="num">' + (i.disponivel ?? '—') + '</td>' +
+      '<td class="num">' + (i.totalAvaliacoes == null ? '—' : i.totalAvaliacoes) + '</td>' +
+      '<td class="num">' + fmtMoney(i.liquidoEmRisco) + '</td>' +
+      '<td class="num">' + (i.margem == null ? '<span class="muted">sem custo</span>' : fmtMoney(i.margem)) + '</td>' +
+      '<td class="num">' + alternativa + '</td>' +
+      '<td><b style="color:' + a.cor + '">' + a.rotulo + '</b>' +
+        '<div class="muted evid" style="margin-top:4px">' + esc(i.porque) + '</div></td>' +
       '</tr>';
   }).join('');
 
   return resumo +
     '<table><thead><tr><th>Anúncio</th><th class="num">Nota</th><th class="num">Opiniões</th>' +
-    '<th>Pool de opiniões</th><th>Veredito</th><th class="num">Vendidos</th><th class="num">Estoque</th>' +
+    '<th class="num">Líquido 30d</th><th class="num">Margem 30d</th><th class="num">Recuperar exige</th><th>O que fazer</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table>' +
-    '<div class="muted" style="margin-top:10px">Antes de recriar um anúncio com muitas vendas, pese: o anúncio novo perde o histórico e o posicionamento na busca.</div>';
+    '<div class="muted" style="margin-top:10px">"Líquido 30d" é o que a recriação põe em risco — não é prejuízo. ' +
+    'A ordem coloca na frente o que tem ação possível; o que está preso ao catálogo desce, por mais que fature.</div>';
 }
 
 function setJanela(j) { janelaConv = j; renderCards(); renderDetail(); }
@@ -642,11 +670,12 @@ async function load(forcar) {
 
   document.getElementById('info').textContent = forcar ? 'atualizando (pode levar um tempo)...' : 'carregando...';
   try {
-    const [cat, perg, conv, rat, rep, hist] = await Promise.all([
+    const [cat, perg, conv, rat, flr, rep, hist] = await Promise.all([
       api('/api/catalog/competition' + (forcar ? '?refresh=1' : '')),
       api('/api/questions/pending' + (forcar ? '?refresh=1' : '')).catch(() => ({ questions: [] })),
       api('/api/conversion' + (forcar ? '?refresh=1' : '')).catch(() => null),
       api('/api/ratings' + (forcar ? '?refresh=1' : '')).catch(() => null),
+      api('/api/fila').catch(() => null),
       api('/api/replenishment').catch(() => null),
       api('/api/history').catch(() => null),
     ]);
@@ -654,6 +683,7 @@ async function load(forcar) {
     perguntas = perg.questions || [];
     conversao = conv;
     notas = rat;
+    fila = flr;
     reposicao = rep;
     historico = hist;
     document.getElementById('info').textContent = 'atualizado em ' + fmtHora(data.updatedAt);
