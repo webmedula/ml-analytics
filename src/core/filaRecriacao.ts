@@ -83,23 +83,24 @@ export function recomendar(
     };
   }
 
-  if (classificacao !== 'recriavel' && classificacao !== 'depende_do_user_product') {
-    return {
-      acao: 'sondar',
-      porque:
-        'Nao ha evidencia suficiente pra afirmar se recriar zera. A sondagem cria um clone pausado, compara o ' +
-        'produto do usuario e descarta em seguida — responde sem estragar nada.',
-    };
-  }
-
-  // Recuperar vem ANTES de recriar: quando poucas avaliacoes resolvem, recriar seria pagar caro
-  // (historico, posicionamento) por algo que uma dezena de clientes satisfeitos resolve.
+  // Recuperar vem ANTES de recriar E antes de sondar: quando poucas avaliacoes resolvem, nao
+  // importa muito se recriar zeraria — o caminho barato ja existe. Isso tambem cobre o anuncio de
+  // 1 ou 2 opinioes, que antes sumia da lista por nao ter opiniao suficiente pra ser classificado.
   if (avaliacoesNecessarias != null && avaliacoesNecessarias <= limiares.recuperavelAte) {
     return {
       acao: 'recuperar_por_avaliacao',
       porque:
         `Bastam ${avaliacoesNecessarias} avaliacao(oes) 5 estrelas pra nota voltar ao limite. Sai mais barato que ` +
         'recriar, e preserva historico, posicionamento e as avaliacoes boas.',
+    };
+  }
+
+  if (classificacao !== 'recriavel' && classificacao !== 'depende_do_user_product') {
+    return {
+      acao: 'sondar',
+      porque:
+        'Nao ha evidencia suficiente pra afirmar se recriar zera. A sondagem cria um clone pausado, compara o ' +
+        'produto do usuario e descarta em seguida — responde sem estragar nada.',
     };
   }
 

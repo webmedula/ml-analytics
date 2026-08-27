@@ -229,14 +229,15 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
         ]),
       );
 
-      // So entram os que estao abaixo do limite: e a fila de trabalho, nao o catalogo inteiro.
-      const abaixo = notas.items.filter(
-        (i) => i.nota != null && i.nota < config.ratingsMinScore && (i.totalAvaliacoes ?? 0) >= config.ratingsMinReviews,
-      );
+      // Todos abaixo do limite entram, INCLUSIVE os de 1 ou 2 opinioes. Antes eles eram cortados
+      // por um minimo de opinioes — e sumiam da tela justamente os casos em que recuperar a nota e
+      // trivial. Quem tem pouca opiniao aparece com a acao "recuperar por avaliacao", que e a
+      // verdade do caso, em vez de nao aparecer.
+      const abaixo = notas.items.filter((i) => i.nota != null && i.nota < config.ratingsMinScore);
 
       const fila = montarFila(abaixo as any, dinheiro, config.ratingsMinScore);
       return {
-        criterio: `nota abaixo de ${config.ratingsMinScore} com pelo menos ${config.ratingsMinReviews} opinioes`,
+        criterio: `nota abaixo de ${config.ratingsMinScore}, qualquer numero de opinioes`,
         atualizadoEm: notas.updatedAt ?? null,
         resumo: resumirFila(fila),
         itens: fila,

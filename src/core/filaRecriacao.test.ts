@@ -56,6 +56,17 @@ describe('recomendar', () => {
     expect(recomendar('sem_dados', null, 500).acao).toBe('sondar');
   });
 
+  it('anuncio de 1 ou 2 opinioes cai em recuperar, e nao some da lista', () => {
+    // Nota 2,6 com 1 opiniao: 4 avaliacoes boas resolvem. Antes esse caso era cortado por um
+    // minimo de opinioes e desaparecia da tela — justamente o mais facil de consertar.
+    expect(recomendar('poucas_opinioes', 4, 800).acao).toBe('recuperar_por_avaliacao');
+    expect(recomendar('sem_dados', 2, 800).acao).toBe('recuperar_por_avaliacao');
+  });
+
+  it('sem alternativa barata E sem classificacao confiavel, sonda', () => {
+    expect(recomendar('poucas_opinioes', 400, 800).acao).toBe('sondar');
+  });
+
   it('"nao adianta" e avaliado ANTES de "compensa"', () => {
     // Anuncio de catalogo com poucas avaliacoes: recuperar por avaliacao ate faria sentido, mas
     // recriar nao e a questao — o que nao pode e sugerir recriacao onde ela nao produz efeito.
