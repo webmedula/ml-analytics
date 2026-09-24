@@ -155,6 +155,10 @@ let historico = null;    // quantos dias de serie ja existem
 let aba = 'hoje';
 const seriesCache = {};  // itemId -> serie diaria, carregada sob demanda
 
+// Painel de recriação (ml-actions) — serviço separado, só ele escreve no Mercado Livre.
+// Link fixo por enquanto: trocar aqui se o endereço do ml-actions mudar.
+const ML_ACTIONS_URL = 'https://tiny-ml-actions.zgbjol.easypanel.host/';
+
 function apiKey() { return localStorage.getItem('tiny_api_key') || ''; }
 async function api(path) {
   const headers = {};
@@ -449,7 +453,10 @@ function renderNotas() {
       (c.recuperar_por_avaliacao || 0) + ' resolvem com avaliação · ' +
       (c.sondar || 0) + ' precisam de sondagem · ' +
       (c.nao_recriar || 0) + ' sem saída' +
-    '</div></div>';
+    '</div>' +
+    '<div style="margin-top:10px"><a href="' + ML_ACTIONS_URL + '" target="_blank" rel="noopener">' +
+      '<button class="secondary">Abrir painel de recriação (ml-actions) →</button></a></div>' +
+    '</div>';
 
   const rows = fila.itens.map(i => {
     const nome = i.permalink
@@ -460,6 +467,13 @@ function renderNotas() {
     const alternativa = i.avaliacoesParaRecuperar == null
       ? '<span class="muted">—</span>'
       : i.avaliacoesParaRecuperar + ' nota(s) 5';
+    // "nao_recriar" = opinião pertence ao produto do catálogo: recriar não zera nada, então não
+    // oferecemos o atalho pro ml-actions nesse caso (evita convidar pra uma ação inútil).
+    const podeRecriar = i.acao !== 'nao_recriar';
+    const acaoBtn = podeRecriar
+      ? '<a href="' + ML_ACTIONS_URL + '?itemId=' + encodeURIComponent(i.itemId) + '" target="_blank" rel="noopener">' +
+        '<button class="secondary" style="padding:5px 10px;font-size:12px">Recriar →</button></a>'
+      : '<span class="muted">—</span>';
 
     return '<tr>' +
       '<td class="title-cell">' + nome +
@@ -471,15 +485,17 @@ function renderNotas() {
       '<td class="num">' + alternativa + '</td>' +
       '<td><b style="color:' + a.cor + '">' + a.rotulo + '</b>' +
         '<div class="muted evid" style="margin-top:4px">' + esc(i.porque) + '</div></td>' +
+      '<td class="num">' + acaoBtn + '</td>' +
       '</tr>';
   }).join('');
 
   return resumo +
     '<table><thead><tr><th>Anúncio</th><th class="num">Nota</th><th class="num">Opiniões</th>' +
-    '<th class="num">Líquido 30d</th><th class="num">Margem 30d</th><th class="num">Recuperar exige</th><th>O que fazer</th>' +
+    '<th class="num">Líquido 30d</th><th class="num">Margem 30d</th><th class="num">Recuperar exige</th><th>O que fazer</th><th></th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table>' +
     '<div class="muted" style="margin-top:10px">"Líquido 30d" é o que a recriação põe em risco — não é prejuízo. ' +
-    'A ordem coloca na frente o que tem ação possível; o que está preso ao catálogo desce, por mais que fature.</div>';
+    'A ordem coloca na frente o que tem ação possível; o que está preso ao catálogo desce, por mais que fature. ' +
+    '"Recriar →" abre o ml-actions já com este anúncio selecionado.</div>';
 }
 
 function setJanela(j) { janelaConv = j; renderCards(); renderDetail(); }
