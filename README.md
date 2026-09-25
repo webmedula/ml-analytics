@@ -1,5 +1,11 @@
 # tiny-analytics
 
+> **v34 (2026-09-24):** novas rotas `GET /api/assistente/ferramentas` e
+> `POST /api/assistente/ferramenta/:nome`, usadas pelo **mcs-gerente** (bot do Telegram em serviço
+> próprio, que consulta os três sistemas da MCS). Somente leitura, protegidas pelo `x-api-key`.
+> O bot do Telegram continua funcionando aqui nesta versão, como plano de volta durante a troca
+> de webhook; sai numa versão seguinte, depois que o Gerente estiver estável.
+
 Serviço **separado** de análises de mercado do Mercado Livre, para rodar ao lado do
 `tiny-pedidos-nf` (que continua cuidando só da emissão de nota). Assim você atualiza e
 experimenta aqui sem nunca reiniciar/arriscar o serviço que emite as NFs.
