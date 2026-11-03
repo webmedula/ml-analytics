@@ -776,3 +776,35 @@ export async function getSaleFee(siteId: string, price: number, listingTypeId: s
   const fee = Number(linha?.sale_fee_amount);
   return Number.isFinite(fee) ? fee : null;
 }
+
+export interface PrecoDeVenda {
+  /** preco que o comprador paga agora (ja com a promocao ativa, se houver) */
+  preco: number | null;
+  /** preco "cheio" do anuncio */
+  precoCheio: number | null;
+  /** id da promocao que esta definindo o preco agora (C-MLB..., P-MLB...), quando ha */
+  promocaoAtivaId: string | null;
+  promocaoAtivaTipo: string | null;
+}
+
+/** Le a resposta de /items/{id}/sale_price. Pura e tolerante a campos ausentes. */
+export function parsePrecoDeVenda(d: any): PrecoDeVenda | null {
+  if (!d || typeof d !== 'object') return null;
+  const n = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+  const meta = d.metadata ?? {};
+  return {
+    preco: n(d.amount),
+    precoCheio: n(d.regular_amount),
+    promocaoAtivaId: meta.promotion_id ?? meta.campaign_id ?? null,
+    promocaoAtivaTipo: meta.promotion_type ? String(meta.promotion_type).toUpperCase() : null,
+  };
+}
+
+/**
+ * Preco de venda ATUAL do anuncio e qual promocao o define. Sem isso, "hoje" seria o preco cheio
+ * (R$ 78,90) quando o comprador na verdade paga o preco da campanha ativa (R$ 36,99), e a
+ * comparacao com as propostas ficaria muito otimista.
+ */
+export async function getSalePriceRaw(itemId: string): Promise<any> {
+  return mlRequest<any>(`/items/${encodeURIComponent(itemId)}/sale_price?context=channel_marketplace`);
+}

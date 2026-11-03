@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
-import { getItemPromotionsRaw, getSellerPromotionsRaw } from '../ml/mlClient';
+import { getItemPromotionsRaw, getSalePriceRaw, getSellerPromotionsRaw } from '../ml/mlClient';
 import { getPromocoes, refreshPromocoes } from '../core/promocoes';
 import { logger } from '../logger';
 
@@ -37,9 +37,9 @@ export async function promocoesRoutes(app: FastifyInstance): Promise<void> {
       return { mensagem: 'Mercado Livre nao autorizado.' };
     }
     const { itemId } = req.params as { itemId: string };
-    const [item, vendedor] = await Promise.allSettled([getItemPromotionsRaw(itemId), getSellerPromotionsRaw()]);
+    const [item, vendedor, preco] = await Promise.allSettled([getItemPromotionsRaw(itemId), getSellerPromotionsRaw(), getSalePriceRaw(itemId)]);
     const lado = (r: PromiseSettledResult<any>) =>
       r.status === 'fulfilled' ? r.value : { erro: r.reason?.message || String(r.reason), status: r.reason?.status ?? null };
-    return { itemId, promocoesDoAnuncio: lado(item), campanhasDoVendedor: lado(vendedor) };
+    return { itemId, precoDeVenda: lado(preco), promocoesDoAnuncio: lado(item), campanhasDoVendedor: lado(vendedor) };
   });
 }
