@@ -1,5 +1,15 @@
 # tiny-analytics
 
+> **v35 (2026-11-03):** **propostas de promoção do ML** (as mesmas da tela
+> `/anuncios/lista/promos`: oferta relâmpago, campanhas como 11.11, co-participação em que o ML
+> banca parte do desconto). Varredura a cada 6h (`PROMOCOES_SCAN_INTERVAL_HOURS`) via
+> `/seller-promotions/items/{id}?app_version=v2`, com estimativa de "você recebe" por venda
+> (preço + parte do ML − tarifa pela tabela do ML − frete médio de 30 dias) comparada ao preço
+> de hoje. Ferramenta `promocoes_do_ml` para o Gerente; `GET /api/promocoes`,
+> `POST /api/promocoes/refresh` e `GET /debug/promocoes/:itemId` (JSON cru, para conferir com a
+> tela). Somente leitura: não adere a nada. Se o ML responder 403, ligue a permissão de
+> promoções no aplicativo do ML (DevCenter) e refaça o login em `/oauth/ml/login`.
+
 > **v34 (2026-09-24):** novas rotas `GET /api/assistente/ferramentas` e
 > `POST /api/assistente/ferramenta/:nome`, usadas pelo **mcs-gerente** (bot do Telegram em serviço
 > próprio, que consulta os três sistemas da MCS). Somente leitura, protegidas pelo `x-api-key`.

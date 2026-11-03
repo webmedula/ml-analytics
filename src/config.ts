@@ -5,7 +5,7 @@ const dataDir = process.env.DATA_DIR || './data';
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v34 (2026-09-24)',
+  appVersion: 'analytics v35 (2026-11-03)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -26,6 +26,9 @@ export const config = {
   conversionMaxItems: Number(process.env.CONVERSION_MAX_ITEMS || 500),
 
   // Diagnostico de notas / candidatos a recriacao de anuncio
+  /** v35: propostas de promocao do ML (Central de Promocoes). Leitura pura. */
+  promocoesScanMaxItems: Number(process.env.PROMOCOES_SCAN_MAX_ITEMS || 500),
+  promocoesScanIntervalHours: Number(process.env.PROMOCOES_SCAN_INTERVAL_HOURS || 6),
   ratingsScanMaxItems: Number(process.env.RATINGS_SCAN_MAX_ITEMS || 500),
   ratingsScanIntervalHours: Number(process.env.RATINGS_SCAN_INTERVAL_HOURS || 12),
   /** Nota minima aceitavel: abaixo disso o anuncio vira candidato. */
@@ -98,6 +101,7 @@ export const config = {
   catalogCompetitionCachePath: path.join(dataDir, 'catalog-competition-cache.json'),
   conversionCachePath: path.join(dataDir, 'conversion-cache.json'),
   ratingsCachePath: path.join(dataDir, 'listing-ratings-cache.json'),
+  promocoesCachePath: path.join(dataDir, 'promocoes-cache.json'),
   historyDir: path.join(dataDir, 'history'),
   tinyTokenStorePath: path.join(dataDir, 'tiny-token.json'),
   custosCachePath: path.join(dataDir, 'custos.json'),

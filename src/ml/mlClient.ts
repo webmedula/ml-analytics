@@ -119,11 +119,14 @@ export interface MlItemAttributes {
   date_created?: string;
   /** Qualidade do anuncio (0-1) segundo o ML. */
   health?: number | null;
+  /** gold_special (Classico), gold_pro (Premium)... — define a tarifa de venda. */
+  listing_type_id?: string;
+  category_id?: string;
 }
 
 /** Multiget de atributos de varios itens (o ML aceita ate 20 ids por chamada em /items?ids=). */
 export async function getItemsAttributes(ids: string[]): Promise<MlItemAttributes[]> {
-  const attrs = 'id,title,price,currency_id,status,catalog_listing,catalog_product_id,permalink,sold_quantity,available_quantity,seller_id,date_created,health';
+  const attrs = 'id,title,price,currency_id,status,catalog_listing,catalog_product_id,permalink,sold_quantity,available_quantity,seller_id,date_created,health,listing_type_id,category_id';
   const out: MlItemAttributes[] = [];
 
   for (let i = 0; i < ids.length; i += 20) {
@@ -738,4 +741,38 @@ export async function debugItemRaw(itemId: string): Promise<any> {
   const visitsMulti = await mlRequest<any>(`/items/visits?ids=${itemId}&date_from=${trintaDias}&date_to=${hoje}`).catch((e) => ({ erro: String(e?.message || e) }));
 
   return { itemId, catalogProductId: productId ?? null, attr: attr ?? null, priceToWin, product, winnerItemId: winnerItemId ?? null, winnerViaMultiget, winnerViaSingle, reviewsViaItem, reviewsViaSearch, reviewsViaProduct, visitsTimeWindow, visitsMulti };
+}
+
+/**
+ * PROMOCOES (v35) — Central de Promocoes do ML, a mesma fonte da tela /anuncios/lista/promos.
+ *
+ * `/seller-promotions/items/{id}?app_version=v2` devolve TODAS as promocoes ligadas ao anuncio:
+ * as que ele ja participa (started/pending) e as propostas abertas (candidate). Leitura pura;
+ * aderir e um POST na mesma rota, que fica fora deste servico de proposito.
+ */
+export async function getItemPromotionsRaw(itemId: string): Promise<any[]> {
+  const data = await mlRequest<any>(`/seller-promotions/items/${encodeURIComponent(itemId)}?app_version=v2`);
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.results)) return data.results;
+  return [];
+}
+
+/** Campanhas para as quais o vendedor foi convidado (visao por campanha, nao por anuncio). */
+export async function getSellerPromotionsRaw(): Promise<any> {
+  const sellerId = await getMlUserId();
+  return mlRequest<any>(`/seller-promotions/users/${sellerId}?app_version=v2`);
+}
+
+/**
+ * Tarifa de venda que o ML cobraria por UMA unidade a esse preco, pela tabela oficial
+ * (/sites/{site}/listing_prices). Usada pra estimar o "voce recebe" de um preco que ainda nao
+ * vendeu — a comissao real (sale_fee dos pedidos) so existe depois da venda.
+ */
+export async function getSaleFee(siteId: string, price: number, listingTypeId: string, categoryId?: string): Promise<number | null> {
+  const qs = new URLSearchParams({ price: String(price), listing_type_id: listingTypeId });
+  if (categoryId) qs.set('category_id', categoryId);
+  const data = await mlRequest<any>(`/sites/${siteId}/listing_prices?${qs.toString()}`);
+  const linha = Array.isArray(data) ? data.find((d: any) => d?.listing_type_id === listingTypeId) ?? data[0] : data;
+  const fee = Number(linha?.sale_fee_amount);
+  return Number.isFinite(fee) ? fee : null;
 }
