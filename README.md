@@ -1,5 +1,9 @@
 # tiny-analytics
 
+> **v37 (2026-11-03):** botão **Participar** em cada proposta da aba Promoções. Ele abre o
+> ml-actions (v21+) já na simulação da adesão. Este serviço continua só lendo. O link do ml-actions
+> passou a ser `https://actions.mcs.ind.br/`.
+
 > **v36 (2026-11-03):** promoções ajustadas com a resposta real do ML. "Hoje" passa a ser o preço
 > de venda atual (`/items/{id}/sale_price`, com a promoção ativa) e não o preço cheio. Ofertas que
 > o ML cria prontas (SMART, PRICE_MATCHING, SMART_LIGHTNING) contam como proposta enquanto não
