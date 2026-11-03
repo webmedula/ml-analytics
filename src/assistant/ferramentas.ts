@@ -6,6 +6,7 @@ import { getMargem, refreshMargem } from '../core/margemScan';
 import { margemDaVenda, ACAO_POR_ESTADO } from '../core/margem';
 import { serieDoAnuncio, vendasPorDia, variacao } from '../core/history';
 import { consultar, descreverEsquema } from '../db/banco';
+import { filtrarPromocoes } from '../core/promocoesConsulta';
 
 /**
  * FERRAMENTAS DO ASSISTENTE.
@@ -135,6 +136,27 @@ export const FERRAMENTAS: DefinicaoDeFerramenta[] = [
       type: 'object',
       properties: { itemId: { type: 'string' }, dias: { type: 'integer' } },
       required: ['itemId'],
+    },
+  },
+  {
+    name: 'promocoes_do_ml',
+    description:
+      'Propostas de promocao que o Mercado Livre oferece para os anuncios (oferta relampago, campanhas como 11.11, ' +
+      'co-participacao em que o ML banca parte do desconto / reduz a tarifa). Para cada uma: preco proposto, desconto, ' +
+      'quanto o ML banca, e uma ESTIMATIVA de quanto voce recebe por venda comparado ao preco de hoje (diferencaPorVenda ' +
+      'negativa = abre mao desse valor por venda). apenas_novas=true traz so as que apareceram nas ultimas horas (padrao 24). ' +
+      'situacao: proposta (padrao, ainda nao aderiu) ou participando. Somente leitura: nao adere a nada.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        apenas_novas: { type: 'boolean' },
+        horas: { type: 'integer', description: 'janela do apenas_novas, em horas (padrao 24)' },
+        situacao: { type: 'string', enum: ['proposta', 'participando', 'todas'] },
+        tipo: { type: 'string', description: 'filtra por tipo do ML: LIGHTNING, DEAL, SMART, PRICE_MATCHING, MARKETPLACE_CAMPAIGN...' },
+        apenas_ml_banca: { type: 'boolean', description: 'so as propostas em que o ML banca parte do desconto' },
+        busca: { type: 'string', description: 'MLB ou parte do titulo' },
+        limite: { type: 'integer', description: '1 a 30, padrao 10' },
+      },
     },
   },
 ];
@@ -346,6 +368,9 @@ export async function executarFerramenta(nome: string, entrada: any): Promise<un
           : null,
       };
     }
+
+    case 'promocoes_do_ml':
+      return filtrarPromocoes(entrada ?? {});
 
     case 'esquema_do_banco':
       return {

@@ -10,6 +10,7 @@ import { tinyOauthRoutes } from './routes/tinyOauth';
 import { telegramRoutes } from './routes/telegram';
 import { dadosRoutes } from './routes/dados';
 import { assistenteRoutes } from './routes/assistente';
+import { promocoesRoutes } from './routes/promocoes';
 
 export function buildServer() {
   const app = Fastify({ logger: false });
@@ -76,6 +77,8 @@ export function buildServer() {
   app.register(dadosRoutes);
   // v34: ferramentas do assistente expostas pro mcs-gerente (bot do Telegram em servico proprio).
   app.register(assistenteRoutes);
+  // v35: propostas de promocao do ML (leitura).
+  app.register(promocoesRoutes);
 
   app.setErrorHandler((err, _req, reply) => {
     logger.error('Erro nao tratado:', err.message, err.stack);
