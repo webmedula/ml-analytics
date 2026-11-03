@@ -56,7 +56,7 @@ describe('filtrarPromocoes', () => {
   const agora = Date.parse('2026-11-03T12:00:00Z');
   const velha = montarLinha(item, normalizarPromocao({ type: 'DEAL', status: 'candidate', price: 43.02, name: '11.11' }, 78.9), { atual: 10, proposta: 6 }, 2, '2026-10-01T00:00:00Z');
   const nova = montarLinha(item, normalizarPromocao({ type: 'LIGHTNING', status: 'candidate', price: 43.9 }, 78.9), { atual: 10, proposta: 6 }, 2, '2026-11-03T08:00:00Z');
-  const ml = montarLinha(item, normalizarPromocao({ type: 'SMART', status: 'started', price: 43.51, original_price: 78.9, meli_percentage: 3 }, 78.9), { atual: 10, proposta: 6 }, 2, '2026-10-01T00:00:00Z');
+  const ml = montarLinha(item, normalizarPromocao({ type: 'MARKETPLACE_CAMPAIGN', status: 'started', price: 43.51, original_price: 78.9, meli_percentage: 3 }, 78.9), { atual: 10, proposta: 6 }, 2, '2026-10-01T00:00:00Z');
 
   it('ordena pelas que menos tiram de cada venda', () => {
     const r = filtrarPromocoes({}, resultado([velha, nova]), agora) as any;
@@ -84,10 +84,62 @@ describe('filtrarPromocoes', () => {
   });
 
   it('texto legivel', () => {
-    expect(linhaEmTexto(nova)).toMatch(/R\$ 78,90 → R\$ 43,90 \(-44,4%\)/);
+    expect(linhaEmTexto(nova)).toMatch(/R\$ 78,90 → R\$ 43,90 \(-44,4% do cheio\)/);
   });
 
   it('chave estavel por anuncio, tipo e campanha', () => {
     expect(chaveDaPromocao('MLB1', { tipo: 'DEAL', promocaoId: 'P-1', ofertaId: null })).toBe('MLB1|DEAL|P-1');
+  });
+});
+
+// Resposta REAL do ML para MLB4109133481 em 2026-11-03 (via /debug/promocoes), resumida.
+const REAL = [
+  { id: 'LGH-MLB1000', type: 'LIGHTNING', ref_id: 'CANDIDATE-MLB4109133481-77687047774', status: 'candidate', price: 76.53, original_price: 78.9, min_discounted_price: 15.79, max_discounted_price: 71.01, suggested_discounted_price: 67.07 },
+  { id: 'C-MLB5941729', type: 'SELLER_CAMPAIGN', sub_type: 'FLEXIBLE_PERCENTAGE', status: 'started', price: 36.99, original_price: 78.9, name: 'OUTUBRO 2026' },
+  { id: 'P-MLB18099366', type: 'PRICE_MATCHING', status: 'started', price: 35.88, meli_percentage: 2.7, seller_percentage: 51.8, original_price: 78.9 },
+  { id: 'P-MLB18055120', type: 'SMART_LIGHTNING', status: 'pending', price: 35, meli_percentage: 3.3, seller_percentage: 52.3, original_price: 78.9 },
+  { type: 'PRICE_DISCOUNT', status: 'candidate', price: 0, original_price: 78.9, name: '', suggested_discounted_price: 70.22 },
+  { id: 'P-MLB17909028', type: 'DEAL', status: 'candidate', price: 0, original_price: 78.9, name: '11.11 da Black', max_discounted_price: 35.88, suggested_discounted_price: 27.99 },
+];
+
+describe('resposta real do ML (MLB4109133481)', () => {
+  const ativa = 'C-MLB5941729';
+  const n = REAL.map((r) => normalizarPromocao(r, 78.9, ativa));
+
+  it('a campanha propria que define o preco e a unica "participando"', () => {
+    expect(n.filter((p) => p.situacao === 'participando').map((p) => p.promocaoId)).toEqual(['C-MLB5941729']);
+  });
+
+  it('ofertas criadas pelo ML (started/pending) contam como proposta, como na tela', () => {
+    expect(n[2].situacao).toBe('proposta');
+    expect(n[3].situacao).toBe('proposta');
+    expect(n[3].rotulo).toContain('relampago');
+  });
+
+  it('candidato usa o preco sugerido, nao o price', () => {
+    expect(n[0].precoProposto).toBe(67.07);
+    expect(n[5].precoProposto).toBe(27.99);
+  });
+
+  it('oferta criada usa o proprio price e o ML banca a parte dele', () => {
+    expect(n[3].precoProposto).toBe(35);
+    const l = montarLinha(item, n[3], { atual: 6, proposta: 5 }, 0, 'x', 36.99);
+    expect(l.mlBanca).toBe(2.6); // 3,3% de 78,90; a tela do ML mostrou R$ 2,64
+    expect(l.precoAtual).toBe(36.99);
+    expect(l.precoCheio).toBe(78.9);
+  });
+
+  it('sem sale_price, cai no status cru', () => {
+    expect(normalizarPromocao(REAL[1], 78.9).situacao).toBe('participando');
+    expect(normalizarPromocao(REAL[2], 78.9).situacao).toBe('proposta');
+  });
+});
+
+describe('parsePrecoDeVenda', () => {
+  it('le amount, regular_amount e a promocao ativa', async () => {
+    const { parsePrecoDeVenda } = await import('../ml/mlClient');
+    expect(parsePrecoDeVenda({ amount: 36.99, regular_amount: 78.9, metadata: { promotion_id: 'C-MLB5941729', promotion_type: 'seller_campaign' } }))
+      .toEqual({ preco: 36.99, precoCheio: 78.9, promocaoAtivaId: 'C-MLB5941729', promocaoAtivaTipo: 'SELLER_CAMPAIGN' });
+    expect(parsePrecoDeVenda(null)).toBeNull();
   });
 });

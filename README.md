@@ -1,5 +1,11 @@
 # tiny-analytics
 
+> **v36 (2026-11-03):** promoções ajustadas com a resposta real do ML. "Hoje" passa a ser o preço
+> de venda atual (`/items/{id}/sale_price`, com a promoção ativa) e não o preço cheio. Ofertas que
+> o ML cria prontas (SMART, PRICE_MATCHING, SMART_LIGHTNING) contam como proposta enquanto não
+> definem o preço, igual à tela. Candidatos usam o preço sugerido, e o convite genérico de
+> "desconto próprio" deixa de aparecer como proposta.
+
 > **v35 (2026-11-03):** **propostas de promoção do ML** (as mesmas da tela
 > `/anuncios/lista/promos`: oferta relâmpago, campanhas como 11.11, co-participação em que o ML
 > banca parte do desconto). Varredura a cada 6h (`PROMOCOES_SCAN_INTERVAL_HOURS`) via

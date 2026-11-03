@@ -22,7 +22,8 @@ export function linhaEmTexto(l: LinhaPromocao): string {
   const partes = [
     `• ${titulo} (${l.itemId})`,
     `  ${l.rotulo}${l.nome && l.nome !== l.rotulo ? ` "${l.nome}"` : ''}${periodo ? `, ${periodo}` : ''}`,
-    `  ${brl(l.precoAtual)} → ${brl(l.precoProposto)}${l.descontoPercentual != null ? ` (-${pct(l.descontoPercentual)})` : ''}` +
+    `  ${l.precoCheio != null && l.precoAtual != null && l.precoCheio !== l.precoAtual ? `cheio ${brl(l.precoCheio)}, hoje ` : ''}` +
+      `${brl(l.precoAtual)} → ${brl(l.precoProposto)}${l.descontoPercentual != null ? ` (-${pct(l.descontoPercentual)} do cheio)` : ''}` +
       (l.mlBanca ? `, ML banca ${brl(l.mlBanca)}` : ''),
   ];
   if (l.voceRecebe != null) {
@@ -82,7 +83,7 @@ export function filtrarPromocoes(f: FiltroPromocoes, r: PromocoesResult | null =
       'tiram de cada venda. Aderir continua sendo pela tela do ML.',
     itens: mostrados.map((l) => ({
       itemId: l.itemId, titulo: l.titulo, tipo: l.tipo, rotulo: l.rotulo, nome: l.nome, situacao: l.situacao,
-      precoAtual: l.precoAtual, precoProposto: l.precoProposto, faixa: l.precoMinimo || l.precoMaximo ? [l.precoMinimo, l.precoMaximo] : undefined,
+      precoCheio: l.precoCheio, precoAtual: l.precoAtual, precoProposto: l.precoProposto, faixa: l.precoMinimo || l.precoMaximo ? [l.precoMinimo, l.precoMaximo] : undefined,
       descontoPercentual: l.descontoPercentual, mlBanca: l.mlBanca, voceRecebe: l.voceRecebe, voceRecebeHoje: l.voceRecebeHoje,
       diferencaPorVenda: l.diferencaPorVenda, inicio: l.inicio, fim: l.fim, prazoParaAderir: l.prazoParaAderir, vistaPrimeiroEm: l.vistaPrimeiroEm,
     })),
