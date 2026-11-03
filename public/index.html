@@ -176,7 +176,7 @@ const seriesCache = {};  // itemId -> serie diaria, carregada sob demanda
 
 // Painel de recriação (ml-actions) — serviço separado, só ele escreve no Mercado Livre.
 // Link fixo por enquanto: trocar aqui se o endereço do ml-actions mudar.
-const ML_ACTIONS_URL = 'https://tiny-ml-actions.zgbjol.easypanel.host/';
+const ML_ACTIONS_URL = 'https://actions.mcs.ind.br/';
 
 function apiKey() { return localStorage.getItem('tiny_api_key') || ''; }
 async function api(path) {
@@ -646,6 +646,8 @@ let promocoes = null;
 let promoFiltro = 'propostas';
 let promoBusca = '';
 const ehRelampago = l => /LIGHTNING|DOD/.test(l.tipo);
+// Tipos que o ml-actions (v21+) sabe aderir; o botao abre la ja na simulacao, nada e feito aqui.
+const PROMO_ADERIVEL = /^(SMART|PRICE_MATCHING|PRICE_MATCHING_MELI_ALL|SMART_LIGHTNING|UNHEALTHY_STOCK|DEAL|DOD|LIGHTNING|MARKETPLACE_CAMPAIGN)$/;
 const ehNovo = l => l.vistaPrimeiroEm && (Date.now() - Date.parse(l.vistaPrimeiroEm)) < 24 * 3600 * 1000;
 
 async function carregarPromocoes(forcar) {
@@ -709,7 +711,7 @@ function renderPromocoes() {
       (a.precoCheio != null && a.precoCheio !== a.precoAtual ? ' <span class="muted">(cheio ' + fmtMoney(a.precoCheio) + ')</span>' : '') +
       (ativa ? ' <span class="muted">· ativa: ' + esc(ativa.nome || ativa.rotulo) + '</span>' : '') +
       (a.voceRecebeHoje != null ? ' · você recebe ~' + fmtMoney(a.voceRecebeHoje) : '');
-    const cab = '<tr class="item-head"><td colspan="6">' + nome + ' <span class="muted">' + itemId + '</span><div class="muted" style="margin-top:3px">' + hoje + '</div></td></tr>';
+    const cab = '<tr class="item-head"><td colspan="7">' + nome + ' <span class="muted">' + itemId + '</span><div class="muted" style="margin-top:3px">' + hoje + '</div></td></tr>';
     const linhas = ls.map(l => {
       const tags = (ehRelampago(l) ? '<span class="tag relampago">⚡ relâmpago</span> ' : '') +
         (l.mlBanca > 0 ? '<span class="tag mlbanca">ML banca</span> ' : '') +
@@ -726,6 +728,11 @@ function renderPromocoes() {
         '<td class="num">' + (l.mlBanca > 0 ? fmtMoney(l.mlBanca) : '—') + '</td>' +
         '<td class="num">' + fmtMoney(l.voceRecebe) + '</td>' +
         '<td class="num">' + difHtml + '<div class="muted">por venda</div></td>' +
+        '<td>' + (l.situacao === 'proposta' && PROMO_ADERIVEL.test(l.tipo)
+          ? '<a href="' + ML_ACTIONS_URL + '?promo=' + encodeURIComponent(l.itemId) +
+            (l.promocaoId ? '&promocao=' + encodeURIComponent(l.promocaoId) : '&tipo=' + encodeURIComponent(l.tipo)) +
+            '" target="_blank" rel="noopener"><button class="secondary">Participar</button></a>'
+          : '') + '</td>' +
         '</tr>';
     }).join('');
     return cab + linhas;
@@ -736,7 +743,7 @@ function renderPromocoes() {
       '<b>' + propostas.length + '</b> proposta(s) em <b>' + new Set(propostas.map(l => l.itemId)).size + '</b> anúncio(s) · ' +
       '<b>' + propostas.filter(ehRelampago).length + '</b> relâmpago · <b>' + propostas.filter(l => l.mlBanca > 0).length + '</b> com parte bancada pelo ML.' +
       '<br><span class="muted">"Você recebe" é estimativa: preço + parte do ML − tarifa pela tabela do ML − frete médio dos últimos 30 dias. ' +
-      'Diferença comparada ao preço de hoje. Para aderir, use a tela de promoções do ML. Atualizado em ' + fmtHora(promocoes.atualizadoEm) +
+      'Diferença comparada ao preço de hoje. "Participar" abre o ml-actions já na simulação da adesão. Atualizado em ' + fmtHora(promocoes.atualizadoEm) +
       (promocoes.avisoDaApi ? ' · ' + esc(promocoes.avisoDaApi) : '') + '</span>' +
     '</div></div>' +
     '<div class="row" style="margin-bottom:4px">' + filtros.map(([k, t, n]) =>
@@ -744,7 +751,7 @@ function renderPromocoes() {
     (grupos.size === 0
       ? '<div class="muted" style="padding:16px 0;text-align:center">Nenhuma promoção neste filtro.</div>'
       : '<div class="table-scroll"><table><thead><tr><th>Promoção</th><th>Período</th><th class="num">Preço proposto</th>' +
-        '<th class="num">ML banca</th><th class="num">Você recebe</th><th class="num">vs. hoje</th></tr></thead><tbody>' + rows + '</tbody></table></div>');
+        '<th class="num">ML banca</th><th class="num">Você recebe</th><th class="num">vs. hoje</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>');
 }
 
 // --- aba REPOSIÇÃO ---
