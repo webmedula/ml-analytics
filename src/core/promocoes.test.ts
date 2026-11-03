@@ -84,7 +84,7 @@ describe('filtrarPromocoes', () => {
   });
 
   it('texto legivel', () => {
-    expect(linhaEmTexto(nova)).toMatch(/R\$ 78,90 → R\$ 43,90 \(-44.36%\)/);
+    expect(linhaEmTexto(nova)).toMatch(/R\$ 78,90 → R\$ 43,90 \(-44,4%\)/);
   });
 
   it('chave estavel por anuncio, tipo e campanha', () => {

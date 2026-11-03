@@ -6,7 +6,8 @@ import { getPromocoes, LinhaPromocao, PromocoesResult } from './promocoes';
  */
 
 const brl = (v: number | null | undefined): string =>
-  v == null ? '?' : `R$ ${v.toFixed(2).replace('.', ',')}`;
+  v == null ? '?' : `${v < 0 ? '-' : ''}R$ ${Math.abs(v).toFixed(2).replace('.', ',')}`;
+const pct = (v: number): string => `${v.toFixed(1).replace('.', ',')}%`;
 
 function dataCurta(iso: string | null): string | null {
   if (!iso) return null;
@@ -21,7 +22,7 @@ export function linhaEmTexto(l: LinhaPromocao): string {
   const partes = [
     `• ${titulo} (${l.itemId})`,
     `  ${l.rotulo}${l.nome && l.nome !== l.rotulo ? ` "${l.nome}"` : ''}${periodo ? `, ${periodo}` : ''}`,
-    `  ${brl(l.precoAtual)} → ${brl(l.precoProposto)}${l.descontoPercentual != null ? ` (-${l.descontoPercentual}%)` : ''}` +
+    `  ${brl(l.precoAtual)} → ${brl(l.precoProposto)}${l.descontoPercentual != null ? ` (-${pct(l.descontoPercentual)})` : ''}` +
       (l.mlBanca ? `, ML banca ${brl(l.mlBanca)}` : ''),
   ];
   if (l.voceRecebe != null) {
