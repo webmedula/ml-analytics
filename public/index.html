@@ -67,6 +67,16 @@
   .tag.parado { background: var(--panel-2); color: var(--text-dim); }
   .delta-up { color: var(--green); } .delta-down { color: var(--red); }
   .spark { vertical-align: middle; }
+  .chip { background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 600; }
+  .chip:hover { background: var(--panel-2); color: var(--text); }
+  .chip.active { border-color: var(--accent); color: var(--text); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .tag.relampago { background: rgba(234,179,8,.18); color: var(--yellow); }
+  .tag.mlbanca { background: rgba(34,197,94,.15); color: var(--green); }
+  .tag.novo { background: rgba(59,130,246,.18); color: var(--accent); }
+  .tag.participando { background: var(--panel-2); color: var(--text-dim); }
+  tr.item-head td { background: var(--panel-2); border-bottom: 1px solid var(--border); }
+  tr.promo-row td:first-child { padding-left: 22px; }
+  .table-scroll { overflow-x: auto; }
 </style>
 </head>
 <body>
@@ -87,6 +97,7 @@
     <button class="tab active" data-aba="hoje" onclick="setAba('hoje')">Hoje</button>
     <button class="tab" data-aba="desempenho" onclick="setAba('desempenho')">Desempenho</button>
     <button class="tab" data-aba="reposicao" onclick="setAba('reposicao')">Reposição</button>
+    <button class="tab" data-aba="promocoes" onclick="setAba('promocoes')">Promoções</button>
   </div>
 
   <section class="panel" id="keyPanel" style="display:none">
@@ -137,6 +148,14 @@
     </div>
     <div id="reposicaoBody"></div>
   </section>
+
+  <section class="panel aba-promocoes" style="display:none">
+    <div class="detail-head">
+      <h2 style="margin:0">Propostas de promoção do Mercado Livre</h2>
+      <div class="row" id="promocoesControls"></div>
+    </div>
+    <div id="promocoesBody"></div>
+  </section>
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -177,8 +196,10 @@ function setAba(nova) {
   document.getElementById('detailPanel').style.display = nova === 'hoje' ? '' : 'none';
   document.querySelector('.aba-desempenho').style.display = nova === 'desempenho' ? '' : 'none';
   document.querySelector('.aba-reposicao').style.display = nova === 'reposicao' ? '' : 'none';
+  document.querySelector('.aba-promocoes').style.display = nova === 'promocoes' ? '' : 'none';
   if (nova === 'desempenho') renderDesempenho();
   if (nova === 'reposicao') renderReposicao();
+  if (nova === 'promocoes') carregarPromocoes();
 }
 
 /** Variação percentual, com o mesmo cuidado do backend: sair do zero não vira "+infinito%". */
@@ -616,6 +637,114 @@ async function carregarSerie(itemId) {
     seriesCache[itemId] = [];
     renderDesempenho();
   }
+}
+
+
+// --- aba PROMOÇÕES ---
+// Leitura pura: mostra o que o ML propõe e quanto sobra por venda. Aderir continua na tela do ML.
+let promocoes = null;
+let promoFiltro = 'propostas';
+let promoBusca = '';
+const ehRelampago = l => /LIGHTNING|DOD/.test(l.tipo);
+const ehNovo = l => l.vistaPrimeiroEm && (Date.now() - Date.parse(l.vistaPrimeiroEm)) < 24 * 3600 * 1000;
+
+async function carregarPromocoes(forcar) {
+  const el = document.getElementById('promocoesBody');
+  if (promocoes && !forcar) { renderPromocoes(); return; }
+  el.innerHTML = '<div class="muted" style="padding:16px 0;text-align:center">' + (forcar ? 'varrendo todos os anúncios no ML (leva 1 a 3 minutos)...' : 'carregando...') + '</div>';
+  try {
+    promocoes = await api('/api/promocoes' + (forcar ? '?refresh=1' : ''));
+  } catch (e) {
+    el.innerHTML = '<div class="muted" style="padding:16px 0;text-align:center">Não consegui ler as promoções: ' + esc(e.message) + '</div>';
+    return;
+  }
+  renderPromocoes();
+}
+
+function setPromoFiltro(f) { promoFiltro = f; renderPromocoes(); }
+
+function fmtData(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+}
+
+function renderPromocoes() {
+  const el = document.getElementById('promocoesBody');
+  const ctl = document.getElementById('promocoesControls');
+  ctl.innerHTML = '<input class="mini" style="width:200px" placeholder="buscar anúncio ou MLB" value="' + esc(promoBusca) + '" ' +
+    'oninput="promoBusca=this.value; renderPromocoes(); this.focus(); this.setSelectionRange(this.value.length,this.value.length)" />' +
+    '<button class="secondary" onclick="carregarPromocoes(true)">Varrer agora</button>';
+  if (!promocoes) return;
+  if (promocoes.apiDisponivel === false) {
+    el.innerHTML = '<div class="insight">' + esc(promocoes.avisoDaApi || 'O ML recusou a leitura de promoções.') + '</div>';
+    return;
+  }
+  const todas = promocoes.itens || [];
+  const propostas = todas.filter(l => l.situacao === 'proposta');
+  const filtros = [
+    ['propostas', 'Todas as propostas', propostas.length],
+    ['relampago', '⚡ Relâmpago', propostas.filter(ehRelampago).length],
+    ['mlbanca', 'ML banca parte', propostas.filter(l => l.mlBanca > 0).length],
+    ['novas', 'Novas (24h)', propostas.filter(ehNovo).length],
+    ['participando', 'Já participando', todas.filter(l => l.situacao === 'participando').length],
+  ];
+  const q = promoBusca.trim().toUpperCase();
+  let lista = promoFiltro === 'participando' ? todas.filter(l => l.situacao === 'participando') : propostas;
+  if (promoFiltro === 'relampago') lista = lista.filter(ehRelampago);
+  if (promoFiltro === 'mlbanca') lista = lista.filter(l => l.mlBanca > 0);
+  if (promoFiltro === 'novas') lista = lista.filter(ehNovo);
+  if (q) lista = lista.filter(l => l.itemId.toUpperCase().includes(q) || (l.titulo || '').toUpperCase().includes(q));
+
+  // Agrupa por anúncio, na ordem da melhor proposta de cada um (o backend já ordena).
+  const grupos = new Map();
+  for (const l of lista) { if (!grupos.has(l.itemId)) grupos.set(l.itemId, []); grupos.get(l.itemId).push(l); }
+  const ativaDe = itemId => todas.find(l => l.itemId === itemId && l.situacao === 'participando');
+
+  const rows = [...grupos.entries()].map(([itemId, ls]) => {
+    const a = ls[0];
+    const ativa = ativaDe(itemId);
+    const nome = a.permalink ? '<a href="' + a.permalink + '" target="_blank" rel="noopener">' + esc(a.titulo || itemId) + '</a>' : esc(a.titulo || itemId);
+    const hoje = 'hoje <b>' + fmtMoney(a.precoAtual) + '</b>' +
+      (a.precoCheio != null && a.precoCheio !== a.precoAtual ? ' <span class="muted">(cheio ' + fmtMoney(a.precoCheio) + ')</span>' : '') +
+      (ativa ? ' <span class="muted">· ativa: ' + esc(ativa.nome || ativa.rotulo) + '</span>' : '') +
+      (a.voceRecebeHoje != null ? ' · você recebe ~' + fmtMoney(a.voceRecebeHoje) : '');
+    const cab = '<tr class="item-head"><td colspan="6">' + nome + ' <span class="muted">' + itemId + '</span><div class="muted" style="margin-top:3px">' + hoje + '</div></td></tr>';
+    const linhas = ls.map(l => {
+      const tags = (ehRelampago(l) ? '<span class="tag relampago">⚡ relâmpago</span> ' : '') +
+        (l.mlBanca > 0 ? '<span class="tag mlbanca">ML banca</span> ' : '') +
+        (ehNovo(l) ? '<span class="tag novo">novo</span> ' : '') +
+        (l.situacao === 'participando' ? '<span class="tag participando">participando</span>' : '');
+      const periodo = [fmtData(l.inicio), fmtData(l.fim)].filter(Boolean).join(' a ');
+      const faixa = l.precoMinimo || l.precoMaximo ? '<div class="muted">aceita ' + fmtMoney(l.precoMinimo) + ' a ' + fmtMoney(l.precoMaximo) + '</div>' : '';
+      const dif = l.diferencaPorVenda;
+      const difHtml = dif == null ? '—' : '<b class="' + (dif >= 0 ? 'delta-up' : 'delta-down') + '">' + (dif >= 0 ? '+' : '−') + fmtMoney(Math.abs(dif)) + '</b>';
+      return '<tr class="promo-row">' +
+        '<td>' + esc(l.rotulo) + (l.nome && l.nome !== l.rotulo ? '<div class="muted">' + esc(l.nome) + '</div>' : '') + '<div style="margin-top:4px">' + tags + '</div></td>' +
+        '<td class="muted">' + (periodo || '—') + (l.prazoParaAderir ? '<div>aderir até ' + fmtData(l.prazoParaAderir) + '</div>' : '') + '</td>' +
+        '<td class="num">' + fmtMoney(l.precoProposto) + (l.descontoPercentual != null ? '<div class="muted">−' + String(l.descontoPercentual).replace('.', ',') + '% do cheio</div>' : '') + faixa + '</td>' +
+        '<td class="num">' + (l.mlBanca > 0 ? fmtMoney(l.mlBanca) : '—') + '</td>' +
+        '<td class="num">' + fmtMoney(l.voceRecebe) + '</td>' +
+        '<td class="num">' + difHtml + '<div class="muted">por venda</div></td>' +
+        '</tr>';
+    }).join('');
+    return cab + linhas;
+  }).join('');
+
+  el.innerHTML =
+    '<div class="insight" style="margin-bottom:12px"><div>' +
+      '<b>' + propostas.length + '</b> proposta(s) em <b>' + new Set(propostas.map(l => l.itemId)).size + '</b> anúncio(s) · ' +
+      '<b>' + propostas.filter(ehRelampago).length + '</b> relâmpago · <b>' + propostas.filter(l => l.mlBanca > 0).length + '</b> com parte bancada pelo ML.' +
+      '<br><span class="muted">"Você recebe" é estimativa: preço + parte do ML − tarifa pela tabela do ML − frete médio dos últimos 30 dias. ' +
+      'Diferença comparada ao preço de hoje. Para aderir, use a tela de promoções do ML. Atualizado em ' + fmtHora(promocoes.atualizadoEm) +
+      (promocoes.avisoDaApi ? ' · ' + esc(promocoes.avisoDaApi) : '') + '</span>' +
+    '</div></div>' +
+    '<div class="row" style="margin-bottom:4px">' + filtros.map(([k, t, n]) =>
+      '<button class="chip' + (promoFiltro === k ? ' active' : '') + '" onclick="setPromoFiltro(\'' + k + '\')">' + t + ' · ' + n + '</button>').join('') + '</div>' +
+    (grupos.size === 0
+      ? '<div class="muted" style="padding:16px 0;text-align:center">Nenhuma promoção neste filtro.</div>'
+      : '<div class="table-scroll"><table><thead><tr><th>Promoção</th><th>Período</th><th class="num">Preço proposto</th>' +
+        '<th class="num">ML banca</th><th class="num">Você recebe</th><th class="num">vs. hoje</th></tr></thead><tbody>' + rows + '</tbody></table></div>');
 }
 
 // --- aba REPOSIÇÃO ---
