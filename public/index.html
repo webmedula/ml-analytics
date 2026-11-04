@@ -73,7 +73,9 @@
   .tag.relampago { background: rgba(234,179,8,.18); color: var(--yellow); }
   .tag.mlbanca { background: rgba(34,197,94,.15); color: var(--green); }
   .tag.novo { background: rgba(59,130,246,.18); color: var(--accent); }
-  .tag.participando { background: var(--panel-2); color: var(--text-dim); }
+  .tag.ativa { background: rgba(34,197,94,.18); color: var(--green); }
+  .tag.programada { background: rgba(59,130,246,.18); color: var(--accent); }
+  .tag.proposta { background: var(--panel-2); color: var(--text-dim); }
   tr.item-head td { background: var(--panel-2); border-bottom: 1px solid var(--border); }
   tr.promo-row td:first-child { padding-left: 22px; }
   .table-scroll { overflow-x: auto; }
@@ -643,7 +645,7 @@ async function carregarSerie(itemId) {
 // --- aba PROMOÇÕES ---
 // Leitura pura: mostra o que o ML propõe e quanto sobra por venda. Aderir continua na tela do ML.
 let promocoes = null;
-let promoFiltro = 'propostas';
+let promoFiltro = 'todas';
 let promoBusca = '';
 const ehRelampago = l => /LIGHTNING|DOD/.test(l.tipo);
 // Tipos que o ml-actions (v21+) sabe aderir; o botao abre la ja na simulacao, nada e feito aqui.
@@ -685,23 +687,29 @@ function renderPromocoes() {
   const todas = promocoes.itens || [];
   const propostas = todas.filter(l => l.situacao === 'proposta');
   const filtros = [
-    ['propostas', 'Todas as propostas', propostas.length],
-    ['relampago', '⚡ Relâmpago', propostas.filter(ehRelampago).length],
-    ['mlbanca', 'ML banca parte', propostas.filter(l => l.mlBanca > 0).length],
-    ['novas', 'Novas (24h)', propostas.filter(ehNovo).length],
-    ['participando', 'Já participando', todas.filter(l => l.situacao === 'participando').length],
+    ['todas', 'Todas', todas.length],
+    ['ativa', 'Ativas', todas.filter(l => l.situacao === 'ativa').length],
+    ['programada', 'Programadas', todas.filter(l => l.situacao === 'programada').length],
+    ['propostas', 'Novas propostas', propostas.length],
+    ['relampago', '⚡ Relâmpago', todas.filter(ehRelampago).length],
+    ['mlbanca', 'ML banca parte', todas.filter(l => l.mlBanca > 0).length],
+    ['novas', 'Vistas nas últimas 24h', propostas.filter(ehNovo).length],
   ];
   const q = promoBusca.trim().toUpperCase();
-  let lista = promoFiltro === 'participando' ? todas.filter(l => l.situacao === 'participando') : propostas;
+  let lista = todas;
+  if (promoFiltro === 'ativa' || promoFiltro === 'programada') lista = todas.filter(l => l.situacao === promoFiltro);
+  if (promoFiltro === 'propostas') lista = propostas;
   if (promoFiltro === 'relampago') lista = lista.filter(ehRelampago);
   if (promoFiltro === 'mlbanca') lista = lista.filter(l => l.mlBanca > 0);
-  if (promoFiltro === 'novas') lista = lista.filter(ehNovo);
+  if (promoFiltro === 'novas') lista = propostas.filter(ehNovo);
   if (q) lista = lista.filter(l => l.itemId.toUpperCase().includes(q) || (l.titulo || '').toUpperCase().includes(q));
 
-  // Agrupa por anúncio, na ordem da melhor proposta de cada um (o backend já ordena).
+  // Agrupa por anúncio, como a tela do ML. Dentro do anúncio: ativa, programadas, propostas.
+  const ORDEM_SIT = { ativa: 0, programada: 1, proposta: 2, outra: 3 };
   const grupos = new Map();
   for (const l of lista) { if (!grupos.has(l.itemId)) grupos.set(l.itemId, []); grupos.get(l.itemId).push(l); }
-  const ativaDe = itemId => todas.find(l => l.itemId === itemId && l.situacao === 'participando');
+  for (const ls of grupos.values()) ls.sort((a, b) => (ORDEM_SIT[a.situacao] ?? 9) - (ORDEM_SIT[b.situacao] ?? 9));
+  const ativaDe = itemId => todas.find(l => l.itemId === itemId && l.situacao === 'ativa');
 
   const rows = [...grupos.entries()].map(([itemId, ls]) => {
     const a = ls[0];
@@ -716,7 +724,7 @@ function renderPromocoes() {
       const tags = (ehRelampago(l) ? '<span class="tag relampago">⚡ relâmpago</span> ' : '') +
         (l.mlBanca > 0 ? '<span class="tag mlbanca">ML banca</span> ' : '') +
         (ehNovo(l) ? '<span class="tag novo">novo</span> ' : '') +
-        (l.situacao === 'participando' ? '<span class="tag participando">participando</span>' : '');
+        (l.situacao === 'ativa' ? '<span class="tag ativa">ATIVA</span>' : l.situacao === 'programada' ? '<span class="tag programada">PROGRAMADA</span>' : '<span class="tag proposta">nova proposta</span>');
       const periodo = [fmtData(l.inicio), fmtData(l.fim)].filter(Boolean).join(' a ');
       const faixa = l.precoMinimo || l.precoMaximo ? '<div class="muted">aceita ' + fmtMoney(l.precoMinimo) + ' a ' + fmtMoney(l.precoMaximo) + '</div>' : '';
       const dif = l.diferencaPorVenda;

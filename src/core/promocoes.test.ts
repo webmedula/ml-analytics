@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contaDaVenda, montarLinha, normalizarPromocao, ordenarLinhas, situacaoDoStatus, chaveDaPromocao, PromocoesResult } from './promocoes';
+import { situacaoDaPromocao, contaDaVenda, montarLinha, normalizarPromocao, ordenarLinhas, situacaoDoStatus, chaveDaPromocao, PromocoesResult } from './promocoes';
 import { filtrarPromocoes, linhaEmTexto } from './promocoesConsulta';
 
 const item = { id: 'MLB4109133481', title: 'Sensor Tpms', permalink: 'x', price: 78.9 };
@@ -26,8 +26,8 @@ describe('normalizarPromocao', () => {
 
   it('status do ML vira situacao', () => {
     expect(situacaoDoStatus('candidate')).toBe('proposta');
-    expect(situacaoDoStatus('started')).toBe('participando');
-    expect(situacaoDoStatus('pending')).toBe('participando');
+    expect(situacaoDoStatus('started')).toBe('ativa');
+    expect(situacaoDoStatus('pending')).toBe('ativa');
     expect(situacaoDoStatus('finished')).toBe('encerrada');
   });
 });
@@ -106,13 +106,13 @@ describe('resposta real do ML (MLB4109133481)', () => {
   const ativa = 'C-MLB5941729';
   const n = REAL.map((r) => normalizarPromocao(r, 78.9, ativa));
 
-  it('a campanha propria que define o preco e a unica "participando"', () => {
-    expect(n.filter((p) => p.situacao === 'participando').map((p) => p.promocaoId)).toEqual(['C-MLB5941729']);
+  it('a campanha propria que define o preco e a unica "ativa"', () => {
+    expect(n.filter((p) => p.situacao === 'ativa').map((p) => p.promocaoId)).toEqual(['C-MLB5941729']);
   });
 
-  it('ofertas criadas pelo ML (started/pending) contam como proposta, como na tela', () => {
+  it('oferta pronta started que nao define o preco e proposta; pending e programada', () => {
     expect(n[2].situacao).toBe('proposta');
-    expect(n[3].situacao).toBe('proposta');
+    expect(n[3].situacao).toBe('programada');
     expect(n[3].rotulo).toContain('relampago');
   });
 
@@ -130,7 +130,7 @@ describe('resposta real do ML (MLB4109133481)', () => {
   });
 
   it('sem sale_price, cai no status cru', () => {
-    expect(normalizarPromocao(REAL[1], 78.9).situacao).toBe('participando');
+    expect(normalizarPromocao(REAL[1], 78.9).situacao).toBe('ativa');
     expect(normalizarPromocao(REAL[2], 78.9).situacao).toBe('proposta');
   });
 });
@@ -139,7 +139,53 @@ describe('parsePrecoDeVenda', () => {
   it('le amount, regular_amount e a promocao ativa', async () => {
     const { parsePrecoDeVenda } = await import('../ml/mlClient');
     expect(parsePrecoDeVenda({ amount: 36.99, regular_amount: 78.9, metadata: { promotion_id: 'C-MLB5941729', promotion_type: 'seller_campaign' } }))
-      .toEqual({ preco: 36.99, precoCheio: 78.9, promocaoAtivaId: 'C-MLB5941729', promocaoAtivaTipo: 'SELLER_CAMPAIGN' });
+      .toEqual({ preco: 36.99, precoCheio: 78.9, promocaoAtivaId: 'C-MLB5941729', ofertaAtivaId: 'C-MLB5941729', promocaoAtivaTipo: 'SELLER_CAMPAIGN' });
+    // formato real (MLB3752079801, 2026-11-04)
+    expect(parsePrecoDeVenda({ amount: 1733, regular_amount: 2899, metadata: { campaign_id: 'P-MLB18193008', promotion_id: 'OFFER-MLB3752079801-14229011941', promotion_type: 'marketplace_campaign' } }))
+      .toMatchObject({ preco: 1733, promocaoAtivaId: 'P-MLB18193008', ofertaAtivaId: 'OFFER-MLB3752079801-14229011941' });
     expect(parsePrecoDeVenda(null)).toBeNull();
+  });
+});
+
+describe('ativa / programada / proposta (tela do ML, MLB3752079801 em 2026-11-04)', () => {
+  const agora = Date.parse('2026-11-04T21:00:00Z');
+  it('pending e programada (com ou sem horario na resposta)', () => {
+    expect(situacaoDaPromocao('SMART_LIGHTNING', 'pending', 'P-1', 'P-9', '2026-11-06T03:00:00Z', agora)).toBe('programada');
+    expect(situacaoDaPromocao('SMART_LIGHTNING', 'pending', 'P-1', 'P-9', null, agora)).toBe('programada');
+  });
+  it('a que define o preco e ativa; campanha que comeca depois e programada', () => {
+    expect(situacaoDaPromocao('SMART', 'started', 'P-9', 'P-9', '2026-11-01T03:00:00Z', agora)).toBe('ativa');
+    expect(situacaoDaPromocao('DEAL', 'started', 'P-2', 'P-9', '2026-11-12T03:00:00Z', agora)).toBe('programada');
+    expect(situacaoDaPromocao('DEAL', 'candidate', 'P-3', 'P-9', null, agora)).toBe('proposta');
+  });
+  it('campanha propria sem adesao continua na lista como proposta', () => {
+    const p = normalizarPromocao({ id: 'C-MLB5941729', type: 'SELLER_CAMPAIGN', status: 'candidate', price: 2754.05, original_price: 2899, name: 'OUTUBRO 2026' }, 2899, 'P-9');
+    expect(p.situacao).toBe('proposta');
+  });
+});
+
+// Resposta REAL do ML para MLB3752079801 em 2026-11-04 e o que a tela do ML mostrava no mesmo dia.
+const REAL2 = [
+  { id: 'LGH-MLB1000', type: 'LIGHTNING', ref_id: 'CANDIDATE-MLB3752079801-77725829657', status: 'candidate', price: 2812.03, original_price: 2899, min_discounted_price: 579.8, max_discounted_price: 2609.1, suggested_discounted_price: 2464.14 },
+  { id: 'DOD-MLB1000', type: 'DOD', status: 'candidate', price: 2812.03, original_price: 2899, min_discounted_price: 579.8, max_discounted_price: 2609.1, suggested_discounted_price: 2464.14 },
+  { id: 'P-MLB18193008', type: 'SMART', ref_id: 'OFFER-MLB3752079801-14229011941', status: 'started', price: 1733, meli_percentage: 2.1, original_price: 2899, name: 'Meli Essencial Promo Nov' },
+  { id: 'P-MLB18055120', type: 'SMART_LIGHTNING', ref_id: 'OFFER-MLB3752079801-14276328303', status: 'pending', price: 1733, meli_percentage: 2.7, original_price: 2899 },
+  { id: 'P-MLB17909028', type: 'DEAL', status: 'candidate', price: 0, original_price: 2899, name: '11.11 da Black', min_discounted_price: 579.8, max_discounted_price: 2812.03, suggested_discounted_price: 2522.13 },
+  { id: 'C-MLB5941729', type: 'SELLER_CAMPAIGN', status: 'candidate', price: 0, original_price: 2899, name: 'OUTUBRO 2026', min_discounted_price: 698.02, max_discounted_price: 2754.05, suggested_discounted_price: 2754.05 },
+];
+
+describe('MLB3752079801: bate com a tela do ML', () => {
+  const ativa = { promocaoId: 'P-MLB18193008', ofertaId: 'OFFER-MLB3752079801-14229011941' };
+  const n = REAL2.map((r) => normalizarPromocao(r, 2899, ativa, 1733));
+  it('Meli Essencial ATIVA, relampago de 6/nov PROGRAMADA, o resto nova proposta', () => {
+    expect(n.map((p) => p.situacao)).toEqual(['proposta', 'proposta', 'ativa', 'programada', 'proposta', 'proposta']);
+  });
+  it('a ativa tambem e achada so pelo id da oferta', () => {
+    expect(normalizarPromocao(REAL2[2], 2899, { ofertaId: 'OFFER-MLB3752079801-14229011941' }, 1733).situacao).toBe('ativa');
+  });
+  it('candidatas do ML nao propoem preco acima do de hoje; campanha propria usa o sugerido (R$ 2.754,05 como na tela)', () => {
+    expect(n[0].precoProposto).toBe(1733);
+    expect(n[4].precoProposto).toBe(1733);
+    expect(n[5].precoProposto).toBe(2754.05);
   });
 });

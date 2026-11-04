@@ -1,4 +1,4 @@
-import { getPromocoes, LinhaPromocao, PromocoesResult } from './promocoes';
+import { getPromocoes, LinhaPromocao, participa, PromocoesResult } from './promocoes';
 
 /**
  * Consulta das propostas de promocao, usada pela ferramenta `promocoes_do_ml` (Gerente no
@@ -39,7 +39,7 @@ export function linhaEmTexto(l: LinhaPromocao): string {
 export interface FiltroPromocoes {
   apenas_novas?: boolean;
   horas?: number;
-  situacao?: 'proposta' | 'participando' | 'todas';
+  situacao?: 'proposta' | 'participando' | 'ativa' | 'programada' | 'todas';
   tipo?: string;
   apenas_ml_banca?: boolean;
   busca?: string;
@@ -59,7 +59,7 @@ export function filtrarPromocoes(f: FiltroPromocoes, r: PromocoesResult | null =
 
   const itens = r.itens.filter(
     (l) =>
-      (situacao === 'todas' || l.situacao === situacao) &&
+      (situacao === 'todas' || (situacao === 'participando' ? participa(l.situacao) : l.situacao === situacao)) &&
       (!f.apenas_novas || Date.parse(l.vistaPrimeiroEm) >= desde) &&
       (!tipo || l.tipo === tipo) &&
       (!f.apenas_ml_banca || l.mlBanca > 0) &&
