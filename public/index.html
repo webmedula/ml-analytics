@@ -11,6 +11,12 @@
     --green: #22c55e; --red: #ef4444; --yellow: #eab308;
   }
   * { box-sizing: border-box; }
+  button.danger { background: var(--red); }
+  .insight.warn { background: rgba(234,179,8,.12); border-color: rgba(234,179,8,.35); color: #f5e6b0; }
+  .insight.bad { background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.35); color: #ffcfcf; }
+  pre.json { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow: auto; font-size: 12px; }
+  #promoModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 50; align-items: center; justify-content: center; padding: 16px; }
+  #promoModal input.txt { padding: 8px 10px; border-radius: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); font-size: 13px; }
   body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
   header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; gap: 10px; }
   header h1 { font-size: 18px; margin: 0; font-weight: 600; }
@@ -185,6 +191,14 @@ async function api(path) {
   const headers = {};
   if (apiKey()) headers['x-api-key'] = apiKey();
   const res = await fetch(path, { headers });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(d.mensagem || ('HTTP ' + res.status)); e.status = res.status; throw e; }
+  return d;
+}
+async function apiPost(path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey()) headers['x-api-key'] = apiKey();
+  const res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body || {}) });
   const d = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(d.mensagem || ('HTTP ' + res.status)); e.status = res.status; throw e; }
   return d;
@@ -643,13 +657,13 @@ async function carregarSerie(itemId) {
 
 
 // --- aba PROMOÇÕES ---
-// Leitura pura: mostra o que o ML propõe e quanto sobra por venda. Aderir continua na tela do ML.
+// Mostra o que o ML propõe e quanto sobra por venda. "Participar" simula e adere aqui mesmo (v39).
 let promocoes = null;
 let promoFiltro = 'todas';
 let promoBusca = '';
 const ehRelampago = l => /LIGHTNING|DOD/.test(l.tipo);
-// Tipos que o ml-actions (v21+) sabe aderir; o botao abre la ja na simulacao, nada e feito aqui.
-const PROMO_ADERIVEL = /^(SMART|PRICE_MATCHING|PRICE_MATCHING_MELI_ALL|SMART_LIGHTNING|UNHEALTHY_STOCK|DEAL|DOD|LIGHTNING|MARKETPLACE_CAMPAIGN)$/;
+// Tipos que a adesao sabe montar (src/core/promocoesAdesao.ts).
+const PROMO_ADERIVEL = /^(SMART|PRICE_MATCHING|PRICE_MATCHING_MELI_ALL|SMART_LIGHTNING|UNHEALTHY_STOCK|DEAL|DOD|LIGHTNING|MARKETPLACE_CAMPAIGN|SELLER_CAMPAIGN)$/;
 const ehNovo = l => l.vistaPrimeiroEm && (Date.now() - Date.parse(l.vistaPrimeiroEm)) < 24 * 3600 * 1000;
 
 async function carregarPromocoes(forcar) {
@@ -737,9 +751,7 @@ function renderPromocoes() {
         '<td class="num">' + fmtMoney(l.voceRecebe) + '</td>' +
         '<td class="num">' + difHtml + '<div class="muted">por venda</div></td>' +
         '<td>' + (l.situacao === 'proposta' && PROMO_ADERIVEL.test(l.tipo)
-          ? '<a href="' + ML_ACTIONS_URL + '?promo=' + encodeURIComponent(l.itemId) +
-            (l.promocaoId ? '&promocao=' + encodeURIComponent(l.promocaoId) : '&tipo=' + encodeURIComponent(l.tipo)) +
-            '" target="_blank" rel="noopener"><button class="secondary">Participar</button></a>'
+          ? '<button class="secondary" onclick="abrirAdesao(\'' + esc(l.itemId) + '\',\'' + esc(l.promocaoId || '') + '\',\'' + esc(l.tipo) + '\')">Participar</button>'
           : '') + '</td>' +
         '</tr>';
     }).join('');
@@ -751,7 +763,7 @@ function renderPromocoes() {
       '<b>' + propostas.length + '</b> proposta(s) em <b>' + new Set(propostas.map(l => l.itemId)).size + '</b> anúncio(s) · ' +
       '<b>' + propostas.filter(ehRelampago).length + '</b> relâmpago · <b>' + propostas.filter(l => l.mlBanca > 0).length + '</b> com parte bancada pelo ML.' +
       '<br><span class="muted">"Você recebe" é estimativa: preço + parte do ML − tarifa pela tabela do ML − frete médio dos últimos 30 dias. ' +
-      'Diferença comparada ao preço de hoje. "Participar" abre o ml-actions já na simulação da adesão. Atualizado em ' + fmtHora(promocoes.atualizadoEm) +
+      'Diferença comparada ao preço de hoje. "Participar" mostra a simulação e só adere depois da sua confirmação. Atualizado em ' + fmtHora(promocoes.atualizadoEm) +
       (promocoes.avisoDaApi ? ' · ' + esc(promocoes.avisoDaApi) : '') + '</span>' +
     '</div></div>' +
     '<div class="row" style="margin-bottom:4px">' + filtros.map(([k, t, n]) =>
@@ -760,6 +772,81 @@ function renderPromocoes() {
       ? '<div class="muted" style="padding:16px 0;text-align:center">Nenhuma promoção neste filtro.</div>'
       : '<div class="table-scroll"><table><thead><tr><th>Promoção</th><th>Período</th><th class="num">Preço proposto</th>' +
         '<th class="num">ML banca</th><th class="num">Você recebe</th><th class="num">vs. hoje</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>');
+}
+
+// --- adesão a uma promoção (v39) ---
+let promoSim = null;
+let promoPedido = null;
+function fecharAdesao() { document.getElementById('promoModal').style.display = 'none'; promoSim = null; }
+
+function abrirAdesao(itemId, promocaoId, tipo) {
+  promoPedido = { itemId, promocaoId: promocaoId || null, tipo };
+  document.getElementById('promoModal').style.display = 'flex';
+  simularAdesao();
+}
+
+async function simularAdesao(preco, estoque) {
+  const b = document.getElementById('promoModalBody');
+  b.innerHTML = '<div class="muted">Relendo a promoção no ML e montando o pedido…</div>';
+  try {
+    const corpo = Object.assign({}, promoPedido);
+    if (preco != null) corpo.preco = preco;
+    if (estoque != null) corpo.estoque = estoque;
+    promoSim = await apiPost('/api/promocoes/simular', corpo);
+    b.innerHTML = renderSimulacao(promoSim);
+  } catch (e) {
+    b.innerHTML = '<div class="insight bad">Não dá para aderir: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderSimulacao(s) {
+  const p = s.promocao;
+  const precisaPreco = 'deal_price' in s.corpo;
+  const precisaEstoque = 'stock' in s.corpo;
+  let h = '<div style="font-weight:600">' + esc(s.titulo || s.itemId) + '</div><div class="muted" style="margin-bottom:12px">' + esc(s.itemId) + '</div>';
+  h += '<table style="margin:0 0 12px"><tbody>' +
+    '<tr><td>Promoção</td><td class="num"><b>' + esc(p.rotulo) + '</b>' + (p.nome ? '<div class="muted">' + esc(p.nome) + '</div>' : '') + '</td></tr>' +
+    '<tr><td>Preço cheio</td><td class="num">' + fmtMoney(s.precoCheio) + '</td></tr>' +
+    '<tr><td>Preço na promoção</td><td class="num"><b>' + fmtMoney(s.precoFinal) + '</b>' + (s.descontoPercentual != null ? ' <span class="muted">(−' + String(s.descontoPercentual).replace('.', ',') + '%)</span>' : '') + '</td></tr>' +
+    (s.mlBanca ? '<tr><td>ML banca por venda</td><td class="num">' + fmtMoney(s.mlBanca) + '</td></tr>' : '') +
+    (precisaEstoque ? '<tr><td>Unidades reservadas</td><td class="num">' + s.corpo.stock + '</td></tr>' : '') +
+    '</tbody></table>';
+  if (precisaPreco || precisaEstoque) {
+    h += '<div class="row" style="margin-bottom:12px">' +
+      (precisaPreco ? '<label class="muted">Preço R$ <input id="promoPreco" class="txt" style="width:100px" value="' + s.corpo.deal_price + '"></label>' : '') +
+      (precisaEstoque ? '<label class="muted">Unidades <input id="promoEstoque" class="txt" style="width:80px" value="' + s.corpo.stock + '"></label>' : '') +
+      '<button class="secondary" onclick="resimularAdesao()">Recalcular</button>' +
+      (p.precoMinimo || p.precoMaximo ? '<span class="muted">o ML aceita ' + fmtMoney(p.precoMinimo) + ' a ' + fmtMoney(p.precoMaximo) + '</span>' : '') +
+      '</div>';
+  }
+  if (s.avisos.length) h += '<div class="insight warn" style="margin-bottom:12px"><div>' + s.avisos.map(esc).join('<br>') + '</div></div>';
+  h += '<details style="margin-bottom:12px"><summary class="muted">Pedido que será enviado ao ML</summary><pre class="json">' + esc(JSON.stringify(s.corpo, null, 2)) + '</pre></details>';
+  h += s.escritaHabilitada
+    ? '<div class="row"><button class="danger" onclick="confirmarAdesao()">Aderir agora</button><span class="muted">Muda o preço que o comprador vê. Dá para sair depois na tela de promoções do ML.</span></div>'
+    : '<div class="insight warn"><div>Adesão desligada (só simulação). Para aderir, ligue <code>PROMOCOES_ENABLED=true</code> no analytics, no EasyPanel.</div></div>';
+  return h;
+}
+
+function resimularAdesao() {
+  const pr = document.getElementById('promoPreco');
+  const es = document.getElementById('promoEstoque');
+  simularAdesao(pr ? Number(pr.value.replace(',', '.')) : null, es ? Number(es.value) : null);
+}
+
+async function confirmarAdesao() {
+  if (!promoSim) return;
+  if (!confirm('Aderir ' + promoSim.itemId + ' a "' + (promoSim.promocao.nome || promoSim.promocao.rotulo) + '" por ' + fmtMoney(promoSim.precoFinal) + '?')) return;
+  const b = document.getElementById('promoModalBody');
+  b.innerHTML = '<div class="muted">Enviando ao Mercado Livre…</div>';
+  try {
+    await apiPost('/api/promocoes/aderir', { token: promoSim.token, confirmacao: 'ADERIR' });
+    b.innerHTML = '<div class="insight">Pronto: o anúncio entrou na promoção. Na aba ela já aparece como PROGRAMADA; na tela do ML pode levar alguns minutos.</div>';
+    const l = (promocoes && promocoes.itens || []).find(x => x.itemId === promoSim.itemId && x.tipo === promoSim.promocao.tipo && (!promoSim.promocao.promocaoId || x.promocaoId === promoSim.promocao.promocaoId) && x.situacao === 'proposta');
+    if (l) { l.situacao = 'programada'; renderPromocoes(); }
+  } catch (e) {
+    b.innerHTML = '<div class="insight bad">O ML não aceitou: ' + esc(e.message) + '</div>';
+  }
+  promoSim = null;
 }
 
 // --- aba REPOSIÇÃO ---
@@ -883,5 +970,14 @@ function exportCsv() {
 load();
 </script>
 
+<div id="promoModal" onclick="if (event.target === this) fecharAdesao()">
+  <div class="panel" style="max-width:640px;width:100%;max-height:88vh;overflow:auto">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <h2 style="margin:0">Participar da promoção</h2>
+      <button class="secondary" onclick="fecharAdesao()">✕</button>
+    </div>
+    <div id="promoModalBody"></div>
+  </div>
+</div>
 </body>
 </html>

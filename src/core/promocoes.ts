@@ -14,7 +14,7 @@ import { getConversion } from './conversion';
  * Na tela do vendedor isso aparece em /anuncios/lista/promos. Aqui a mesma lista vem da API
  * seller-promotions, e para cada proposta estimamos quanto sobra por venda comparado ao preco atual.
  *
- * Leitura pura: nada aqui adere, recusa ou muda preco.
+ * Leitura: nada aqui adere ou muda preco. A adesao (v39) fica em promocoesAdesao.ts, so pelo painel.
  *
  * O "voce recebe" e ESTIMATIVA: preco proposto + parte que o ML banca - tarifa pela tabela do ML
  * naquele preco - frete medio por unidade dos ultimos 30 dias. A tela do ML pode divergir alguns
@@ -318,6 +318,19 @@ export function getPromocoes(): PromocoesResult | null {
     cached = null;
   }
   return cached;
+}
+
+/**
+ * v39: depois de aderir pelo painel, a linha passa a PROGRAMADA no cache na hora, sem esperar a
+ * proxima varredura (o ML leva alguns minutos para refletir). A varredura seguinte confirma.
+ */
+export function marcarAderida(itemId: string, tipo: string, promocaoId: string | null): void {
+  const r = getPromocoes();
+  if (!r) return;
+  const l = r.itens.find((x) => x.itemId === itemId && x.tipo === tipo && (promocaoId ? x.promocaoId === promocaoId : true) && x.situacao === 'proposta');
+  if (!l) return;
+  l.situacao = 'programada';
+  persist({ ...r, itens: ordenarLinhas(r.itens) });
 }
 
 let scanInFlight: Promise<PromocoesResult> | null = null;

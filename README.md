@@ -1,5 +1,7 @@
 # tiny-analytics
 
+> **v39 (2026-11-04):** "Participar" na aba Promoções simula e adere ali mesmo (antes abria o ml-actions). É a única escrita no ML deste serviço: exige `PROMOCOES_ENABLED=true`, simulação (token de 30 min) e confirmação; histórico em `data/promocoes-adesoes.json`. O Gerente não alcança essas rotas (só chama `/api/assistente/ferramenta/*`). Inclui campanha própria (SELLER_CAMPAIGN). `/debug/promocoes/:itemId` passa a trazer `custosDaVenda` (tarifa e frete grátis no preço de hoje e no cheio) para acertar o "você recebe".
+>
 > **v38 (2026-11-04):** a aba Promoções passa a bater com a tela do ML, conferido no MLB3752079801.
 > Mostra **Ativa** (a que define o preço; o `sale_price` traz `campaign_id` = id da promoção e
 > `promotion_id` = `ref_id` da oferta), **Programada** (status `pending`) e **Nova proposta**. A
