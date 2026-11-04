@@ -1,5 +1,7 @@
 # tiny-analytics
 
+> **v40 (2026-11-04):** o "você recebe" da aba Promoções passa a usar o frete grátis que o ML cobra naquele preço (`/users/{id}/shipping_options/free?item_id=&item_price=`), em vez do frete médio de 30 dias. No MLB5332741758 bate com a tela: 172,69 − tarifa 20,72 − frete 21,75 = 130,22, e a 237,49 o frete sobe para 25,45 (183,54). A parte que o ML banca continua vindo de `meli_percentage`, que pode diferir alguns reais da tela (relâmpago: API 3,1% = 7,75, tela 10,25).
+>
 > **v39 (2026-11-04):** "Participar" na aba Promoções simula e adere ali mesmo (antes abria o ml-actions). É a única escrita no ML deste serviço: exige `PROMOCOES_ENABLED=true`, simulação (token de 30 min) e confirmação; histórico em `data/promocoes-adesoes.json`. O Gerente não alcança essas rotas (só chama `/api/assistente/ferramenta/*`). Inclui campanha própria (SELLER_CAMPAIGN). `/debug/promocoes/:itemId` passa a trazer `custosDaVenda` (tarifa e frete grátis no preço de hoje e no cheio) para acertar o "você recebe".
 >
 > **v38 (2026-11-04):** a aba Promoções passa a bater com a tela do ML, conferido no MLB3752079801.

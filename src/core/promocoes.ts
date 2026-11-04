@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from '../config';
 import { logger } from '../logger';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
-import { getItemPromotionsRaw, getItemsAttributes, getSaleFee, getSalePriceRaw, getSellerItemIds, MlApiError, MlItemAttributes, parsePrecoDeVenda, PrecoDeVenda } from '../ml/mlClient';
+import { getFreteGratis, getItemPromotionsRaw, getItemsAttributes, getSaleFee, getSalePriceRaw, getSellerItemIds, MlApiError, MlItemAttributes, parsePrecoDeVenda, PrecoDeVenda } from '../ml/mlClient';
 import { getConversion } from './conversion';
 
 /**
@@ -17,7 +17,7 @@ import { getConversion } from './conversion';
  * Leitura: nada aqui adere ou muda preco. A adesao (v39) fica em promocoesAdesao.ts, so pelo painel.
  *
  * O "voce recebe" e ESTIMATIVA: preco proposto + parte que o ML banca - tarifa pela tabela do ML
- * naquele preco - frete medio por unidade dos ultimos 30 dias. A tela do ML pode divergir alguns
+ * naquele preco - frete gratis que o ML cobra naquele preco (v40; sem ele, frete medio dos ultimos 30 dias). A tela do ML pode divergir alguns
  * centavos (arredondamento, frete do envio real). O campo `estimativa` diz o que entrou na conta.
  */
 
@@ -208,15 +208,28 @@ export function contaDaVenda(p: {
   mlPercentual: number | null;
   tarifaAtual: number | null;
   tarifaProposta: number | null;
+  /** frete medio por unidade dos ultimos 30 dias: so quando o ML nao informa o frete gratis */
   fretePorUnidade: number | null;
+  /** v40: frete gratis que o vendedor paga em cada preco, pelo ML (o mesmo da tela de promocoes) */
+  freteAtual?: number | null;
+  freteProposto?: number | null;
 }): ContaDaVenda {
-  const frete = p.fretePorUnidade ?? 0;
+  const media = p.fretePorUnidade ?? 0;
+  const doMl = p.freteAtual != null && p.freteProposto != null;
+  const freteHoje = doMl ? p.freteAtual! : media;
+  const fretePromo = doMl ? p.freteProposto! : media;
   const mlBanca = p.mlPercentual && p.precoOriginal ? (p.precoOriginal * p.mlPercentual) / 100 : 0;
   const voceRecebe =
-    p.precoProposto != null && p.tarifaProposta != null ? p.precoProposto + mlBanca - p.tarifaProposta - frete : null;
-  const voceRecebeHoje = p.precoAtual != null && p.tarifaAtual != null ? p.precoAtual - p.tarifaAtual - frete : null;
+    p.precoProposto != null && p.tarifaProposta != null ? p.precoProposto + mlBanca - p.tarifaProposta - fretePromo : null;
+  const voceRecebeHoje = p.precoAtual != null && p.tarifaAtual != null ? p.precoAtual - p.tarifaAtual - freteHoje : null;
   const partes = ['preco proposto', mlBanca ? `+ R$ ${mlBanca.toFixed(2)} bancados pelo ML` : null, '- tarifa pela tabela do ML'];
-  partes.push(p.fretePorUnidade != null ? `- frete medio R$ ${frete.toFixed(2)}/un (30 dias)` : '(sem frete: anuncio sem vendas no periodo)');
+  partes.push(
+    doMl
+      ? `- frete gratis R$ ${fretePromo.toFixed(2)} (calculo do ML nesse preco)`
+      : p.fretePorUnidade != null
+        ? `- frete medio R$ ${media.toFixed(2)}/un (30 dias)`
+        : '(sem frete: anuncio sem vendas no periodo)',
+  );
   return {
     mlBanca: r2(mlBanca) ?? 0,
     voceRecebe: r2(voceRecebe),
@@ -260,7 +273,7 @@ export function montarLinha(
   item: Pick<MlItemAttributes, 'id' | 'title' | 'permalink' | 'price'>,
   promo: PromocaoNormalizada,
   tarifas: { atual: number | null; proposta: number | null },
-  fretePorUnidade: number | null,
+  fretePorUnidade: number | null | { media: number | null; atual: number | null; proposta: number | null },
   vistaPrimeiroEm: string,
   precoDeVendaAtual?: number | null,
 ): LinhaPromocao {
@@ -273,7 +286,9 @@ export function montarLinha(
     mlPercentual: promo.mlPercentual,
     tarifaAtual: tarifas.atual,
     tarifaProposta: tarifas.proposta,
-    fretePorUnidade,
+    ...(fretePorUnidade != null && typeof fretePorUnidade === 'object'
+      ? { fretePorUnidade: fretePorUnidade.media, freteAtual: fretePorUnidade.atual, freteProposto: fretePorUnidade.proposta }
+      : { fretePorUnidade }),
   });
   return {
     ...promo,
@@ -379,6 +394,14 @@ async function doScan(): Promise<PromocoesResult> {
     }
     return tarifas.get(k)!;
   };
+  // v40: frete gratis por (anuncio, preco), pelo ML. Sem frete gratis ou se falhar: media de 30 dias.
+  const fretes = new Map<string, Promise<number | null>>();
+  const freteGratis = (item: MlItemAttributes, preco: number | null): Promise<number | null> => {
+    if (preco == null || !item.shipping?.free_shipping) return Promise.resolve(null);
+    const k = `${item.id}|${preco}`;
+    if (!fretes.has(k)) fretes.set(k, getFreteGratis(item, preco).catch(() => null));
+    return fretes.get(k)!;
+  };
 
   const itens: LinhaPromocao[] = [];
   let erros = 0;
@@ -407,6 +430,7 @@ async function doScan(): Promise<PromocoesResult> {
     const precoCheio = num(item.price);
     const precoAtual = venda?.preco ?? precoCheio;
     const tarifaAtual = await tarifa(item, precoAtual);
+    const freteAtual = await freteGratis(item, precoAtual);
     for (const raw of brutos) {
       const promo = normalizarPromocao(raw, precoCheio, venda ? { promocaoId: venda.promocaoAtivaId, ofertaId: venda.ofertaAtivaId } : null, venda?.preco ?? null);
       if (promo.situacao === 'encerrada') continue;
@@ -418,8 +442,17 @@ async function doScan(): Promise<PromocoesResult> {
       const chave = chaveDaPromocao(item.id, promo);
       vistas[chave] = anteriores[chave] ?? agora;
       const tarifaProposta = await tarifa(item, promo.precoProposto);
+      const freteProposto = await freteGratis(item, promo.precoProposto);
+      const media = fretePorItem.get(item.id) ?? null;
       itens.push(
-        montarLinha(item, promo, { atual: tarifaAtual, proposta: tarifaProposta }, fretePorItem.get(item.id) ?? null, vistas[chave], precoAtual),
+        montarLinha(
+          item,
+          promo,
+          { atual: tarifaAtual, proposta: tarifaProposta },
+          freteAtual != null && freteProposto != null ? { media, atual: freteAtual, proposta: freteProposto } : media,
+          vistas[chave],
+          precoAtual,
+        ),
       );
     }
   });

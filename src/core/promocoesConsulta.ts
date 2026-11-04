@@ -79,7 +79,7 @@ export function filtrarPromocoes(f: FiltroPromocoes, r: PromocoesResult | null =
     anunciosComProposta: new Set(itens.map((l) => l.itemId)).size,
     porTipo,
     observacao:
-      'voceRecebe e estimativa (preco + parte do ML - tarifa pela tabela do ML - frete medio). Ordenado pelas que menos ' +
+      'voceRecebe = preco + parte do ML - tarifa - frete gratis (os dois pelo calculo do ML; sem frete gratis, frete medio de 30 dias). Ordenado pelas que menos ' +
       'tiram de cada venda. Aderir continua sendo pela tela do ML.',
     itens: mostrados.map((l) => ({
       itemId: l.itemId, titulo: l.titulo, tipo: l.tipo, rotulo: l.rotulo, nome: l.nome, situacao: l.situacao,

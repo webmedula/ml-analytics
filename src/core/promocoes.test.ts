@@ -189,3 +189,19 @@ describe('MLB3752079801: bate com a tela do ML', () => {
     expect(n[5].precoProposto).toBe(2754.05);
   });
 });
+
+describe('contaDaVenda com o frete gratis do ML (v40)', () => {
+  // MLB5332741758 em 2026-11-04: tarifa e frete de /listing_prices e /shipping_options/free.
+  it('bate com o "voce recebe" da tela do ML', () => {
+    const bf = contaDaVenda({ precoAtual: 172.69, precoProposto: 172.69, precoOriginal: 249.99, mlPercentual: null, tarifaAtual: 20.72, tarifaProposta: 20.72, fretePorUnidade: 18, freteAtual: 21.75, freteProposto: 21.75 });
+    expect(bf.voceRecebe).toBe(130.22);
+    const outubro = contaDaVenda({ precoAtual: 172.69, precoProposto: 237.49, precoOriginal: 249.99, mlPercentual: null, tarifaAtual: 20.72, tarifaProposta: 28.5, fretePorUnidade: 18, freteAtual: 21.75, freteProposto: 25.45 });
+    expect(outubro.voceRecebe).toBe(183.54);
+    expect(outubro.voceRecebeHoje).toBe(130.22);
+  });
+  it('sem o frete do ML, cai na media de 30 dias', () => {
+    const c = contaDaVenda({ precoAtual: 100, precoProposto: 90, precoOriginal: 100, mlPercentual: null, tarifaAtual: 12, tarifaProposta: 10.8, fretePorUnidade: 20 });
+    expect(c.voceRecebe).toBe(59.2);
+    expect(c.estimativa).toMatch(/frete medio/);
+  });
+});

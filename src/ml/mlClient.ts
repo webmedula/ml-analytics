@@ -131,11 +131,14 @@ export interface MlItemAttributes {
   /** gold_special (Classico), gold_pro (Premium)... — define a tarifa de venda. */
   listing_type_id?: string;
   category_id?: string;
+  /** v40: modo/logistica/frete gratis — entra na conta do frete que o vendedor paga. */
+  shipping?: { mode?: string; logistic_type?: string; free_shipping?: boolean } | null;
+  condition?: string;
 }
 
 /** Multiget de atributos de varios itens (o ML aceita ate 20 ids por chamada em /items?ids=). */
 export async function getItemsAttributes(ids: string[]): Promise<MlItemAttributes[]> {
-  const attrs = 'id,title,price,currency_id,status,catalog_listing,catalog_product_id,permalink,sold_quantity,available_quantity,seller_id,date_created,health,listing_type_id,category_id';
+  const attrs = 'id,title,price,currency_id,status,catalog_listing,catalog_product_id,permalink,sold_quantity,available_quantity,seller_id,date_created,health,listing_type_id,category_id,shipping,condition';
   const out: MlItemAttributes[] = [];
 
   for (let i = 0; i < ids.length; i += 20) {
@@ -876,6 +879,31 @@ export async function sondarCustosDaVenda(itemId: string, precos: number[]): Pro
     };
   }
   return { shipping: item?.shipping ?? null, listingType: item?.listing_type_id, categoria: item?.category_id, porPreco, freteDoAnuncio: await tentar(`/items/${itemId}/shipping_options/free`) };
+}
+
+/**
+ * v40: frete que o VENDEDOR paga por unidade com frete gratis, a esse preco. E o numero que a tela
+ * de promocoes do ML usa no "voce recebe": conferido em 2026-11-04 no MLB5332741758 (Full, Classico):
+ * 172,69 - tarifa 20,72 - frete 21,75 = 130,22, igual a tela; a 249,99 o frete sobe para 25,45.
+ * O custo muda por faixa de preco, por isso e consultado por preco.
+ */
+export async function getFreteGratis(
+  item: Pick<MlItemAttributes, 'id' | 'listing_type_id' | 'shipping' | 'condition'>,
+  preco: number,
+): Promise<number | null> {
+  const uid = await getMlUserId();
+  const qs = new URLSearchParams({
+    item_id: item.id,
+    item_price: String(preco),
+    listing_type_id: item.listing_type_id ?? '',
+    mode: item.shipping?.mode ?? 'me2',
+    condition: item.condition ?? 'new',
+    logistic_type: item.shipping?.logistic_type ?? '',
+    verbose: 'true',
+  });
+  const d = await mlRequest<any>(`/users/${uid}/shipping_options/free?${qs.toString()}`);
+  const custo = Number(d?.coverage?.all_country?.list_cost);
+  return Number.isFinite(custo) ? custo : null;
 }
 
 /** Dados basicos do anuncio pra simulacao (titulo, preco cheio, status). */
