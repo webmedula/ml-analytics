@@ -762,7 +762,7 @@ function renderPromocoes() {
     '<div class="insight" style="margin-bottom:12px"><div>' +
       '<b>' + propostas.length + '</b> proposta(s) em <b>' + new Set(propostas.map(l => l.itemId)).size + '</b> anúncio(s) · ' +
       '<b>' + propostas.filter(ehRelampago).length + '</b> relâmpago · <b>' + propostas.filter(l => l.mlBanca > 0).length + '</b> com parte bancada pelo ML.' +
-      '<br><span class="muted">"Você recebe" é estimativa: preço + parte do ML − tarifa pela tabela do ML − frete médio dos últimos 30 dias. ' +
+      '<br><span class="muted">"Você recebe": preço + parte do ML − tarifa − frete grátis, os dois pelo cálculo do ML naquele preço (sem frete grátis, usa o frete médio de 30 dias). A parte do ML vem da API e pode diferir alguns reais da tela. ' +
       'Diferença comparada ao preço de hoje. "Participar" mostra a simulação e só adere depois da sua confirmação. Atualizado em ' + fmtHora(promocoes.atualizadoEm) +
       (promocoes.avisoDaApi ? ' · ' + esc(promocoes.avisoDaApi) : '') + '</span>' +
     '</div></div>' +
@@ -839,7 +839,8 @@ async function confirmarAdesao() {
   const b = document.getElementById('promoModalBody');
   b.innerHTML = '<div class="muted">Enviando ao Mercado Livre…</div>';
   try {
-    await apiPost('/api/promocoes/aderir', { token: promoSim.token, confirmacao: 'ADERIR' });
+    const r = await apiPost('/api/promocoes/aderir', { token: promoSim.token, confirmacao: 'ADERIR' });
+    if (r.ok === false) throw new Error(r.mensagem || r.erro || 'recusado');
     b.innerHTML = '<div class="insight">Pronto: o anúncio entrou na promoção. Na aba ela já aparece como PROGRAMADA; na tela do ML pode levar alguns minutos.</div>';
     const l = (promocoes && promocoes.itens || []).find(x => x.itemId === promoSim.itemId && x.tipo === promoSim.promocao.tipo && (!promoSim.promocao.promocaoId || x.promocaoId === promoSim.promocao.promocaoId) && x.situacao === 'proposta');
     if (l) { l.situacao = 'programada'; renderPromocoes(); }

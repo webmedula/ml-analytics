@@ -94,14 +94,18 @@ export async function promocoesRoutes(app: FastifyInstance): Promise<void> {
       return { mensagem: 'Confirmacao ausente. Envie confirmacao: "ADERIR".' };
     }
     try {
+      // Recusa do ML volta com 200 + ok:false. Com 502, o proxy na frente do servico trocava o corpo
+      // por uma pagina propria e o painel so mostrava "HTTP 502", sem o motivo do ML (2026-11-04).
       const r = await aderir(token);
-      reply.code(r.status === 'sucesso' ? 200 : 502);
-      return r.status === 'sucesso' ? r : { ...r, mensagem: r.erro };
+      return { ok: r.status === 'sucesso', ...r, mensagem: r.status === 'sucesso' ? null : r.erro };
     } catch (err: any) {
       reply.code(err instanceof AdesaoBloqueada ? 409 : 500);
       return { mensagem: err?.message || 'Erro ao aderir' };
     }
   });
+
+  /** Historico com a resposta crua do ML (aceite ou recusa). /debug aceita ?key= no navegador. */
+  app.get('/debug/promocoes-adesoes', async () => ({ escritaHabilitada: config.promocoesEnabled, items: lerHistoricoAdesoes().slice(0, 20) }));
 
   app.get('/api/promocoes/adesoes', async () => ({ escritaHabilitada: config.promocoesEnabled, items: lerHistoricoAdesoes() }));
 }
