@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contaDaVenda, montarLinha, normalizarPromocao, ordenarLinhas, situacaoDoStatus, chaveDaPromocao, PromocoesResult } from './promocoes';
+import { situacaoDaPromocao, contaDaVenda, montarLinha, normalizarPromocao, ordenarLinhas, situacaoDoStatus, chaveDaPromocao, PromocoesResult } from './promocoes';
 import { filtrarPromocoes, linhaEmTexto } from './promocoesConsulta';
 
 const item = { id: 'MLB4109133481', title: 'Sensor Tpms', permalink: 'x', price: 78.9 };
@@ -26,8 +26,8 @@ describe('normalizarPromocao', () => {
 
   it('status do ML vira situacao', () => {
     expect(situacaoDoStatus('candidate')).toBe('proposta');
-    expect(situacaoDoStatus('started')).toBe('participando');
-    expect(situacaoDoStatus('pending')).toBe('participando');
+    expect(situacaoDoStatus('started')).toBe('ativa');
+    expect(situacaoDoStatus('pending')).toBe('ativa');
     expect(situacaoDoStatus('finished')).toBe('encerrada');
   });
 });
@@ -106,8 +106,8 @@ describe('resposta real do ML (MLB4109133481)', () => {
   const ativa = 'C-MLB5941729';
   const n = REAL.map((r) => normalizarPromocao(r, 78.9, ativa));
 
-  it('a campanha propria que define o preco e a unica "participando"', () => {
-    expect(n.filter((p) => p.situacao === 'participando').map((p) => p.promocaoId)).toEqual(['C-MLB5941729']);
+  it('a campanha propria que define o preco e a unica "ativa"', () => {
+    expect(n.filter((p) => p.situacao === 'ativa').map((p) => p.promocaoId)).toEqual(['C-MLB5941729']);
   });
 
   it('ofertas criadas pelo ML (started/pending) contam como proposta, como na tela', () => {
@@ -130,7 +130,7 @@ describe('resposta real do ML (MLB4109133481)', () => {
   });
 
   it('sem sale_price, cai no status cru', () => {
-    expect(normalizarPromocao(REAL[1], 78.9).situacao).toBe('participando');
+    expect(normalizarPromocao(REAL[1], 78.9).situacao).toBe('ativa');
     expect(normalizarPromocao(REAL[2], 78.9).situacao).toBe('proposta');
   });
 });
@@ -141,5 +141,22 @@ describe('parsePrecoDeVenda', () => {
     expect(parsePrecoDeVenda({ amount: 36.99, regular_amount: 78.9, metadata: { promotion_id: 'C-MLB5941729', promotion_type: 'seller_campaign' } }))
       .toEqual({ preco: 36.99, precoCheio: 78.9, promocaoAtivaId: 'C-MLB5941729', promocaoAtivaTipo: 'SELLER_CAMPAIGN' });
     expect(parsePrecoDeVenda(null)).toBeNull();
+  });
+});
+
+describe('ativa / programada / proposta (tela do ML, MLB3752079801 em 2026-11-04)', () => {
+  const agora = Date.parse('2026-11-04T21:00:00Z');
+  it('relampago pronta com horario marcado e programada; sem horario e proposta', () => {
+    expect(situacaoDaPromocao('SMART_LIGHTNING', 'pending', 'P-1', 'P-9', '2026-11-06T03:00:00Z', agora)).toBe('programada');
+    expect(situacaoDaPromocao('SMART_LIGHTNING', 'pending', 'P-1', 'P-9', null, agora)).toBe('proposta');
+  });
+  it('a que define o preco e ativa; campanha que comeca depois e programada', () => {
+    expect(situacaoDaPromocao('SMART', 'started', 'P-9', 'P-9', '2026-11-01T03:00:00Z', agora)).toBe('ativa');
+    expect(situacaoDaPromocao('DEAL', 'started', 'P-2', 'P-9', '2026-11-12T03:00:00Z', agora)).toBe('programada');
+    expect(situacaoDaPromocao('DEAL', 'candidate', 'P-3', 'P-9', null, agora)).toBe('proposta');
+  });
+  it('campanha propria sem adesao continua na lista como proposta', () => {
+    const p = normalizarPromocao({ id: 'C-MLB5941729', type: 'SELLER_CAMPAIGN', status: 'candidate', price: 2754.05, original_price: 2899, name: 'OUTUBRO 2026' }, 2899, 'P-9');
+    expect(p.situacao).toBe('proposta');
   });
 });

@@ -145,13 +145,13 @@ export const FERRAMENTAS: DefinicaoDeFerramenta[] = [
       'co-participacao em que o ML banca parte do desconto / reduz a tarifa). Para cada uma: preco proposto, desconto, ' +
       'quanto o ML banca, e uma ESTIMATIVA de quanto voce recebe por venda comparado ao preco de hoje (diferencaPorVenda ' +
       'negativa = abre mao desse valor por venda). apenas_novas=true traz so as que apareceram nas ultimas horas (padrao 24). ' +
-      'situacao: proposta (padrao, ainda nao aderiu) ou participando. Somente leitura: nao adere a nada.',
+      'situacao: proposta (padrao, ainda nao aderiu), ativa (define o preco agora), programada (aderiu, ainda nao vale), participando (ativa ou programada) ou todas. Somente leitura: nao adere a nada.',
     input_schema: {
       type: 'object',
       properties: {
         apenas_novas: { type: 'boolean' },
         horas: { type: 'integer', description: 'janela do apenas_novas, em horas (padrao 24)' },
-        situacao: { type: 'string', enum: ['proposta', 'participando', 'todas'] },
+        situacao: { type: 'string', enum: ['proposta', 'ativa', 'programada', 'participando', 'todas'] },
         tipo: { type: 'string', description: 'filtra por tipo do ML: LIGHTNING, DEAL, SMART, PRICE_MATCHING, MARKETPLACE_CAMPAIGN...' },
         apenas_ml_banca: { type: 'boolean', description: 'so as propostas em que o ML banca parte do desconto' },
         busca: { type: 'string', description: 'MLB ou parte do titulo' },

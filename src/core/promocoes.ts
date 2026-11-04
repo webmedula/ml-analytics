@@ -38,37 +38,56 @@ export const ROTULO_DO_TIPO: Record<string, string> = {
   UNHEALTHY_STOCK: 'Estoque parado no Full',
 };
 
-export type SituacaoPromocao = 'proposta' | 'participando' | 'encerrada' | 'outra';
+/**
+ * As tres situacoes da tela de promocoes do ML: ATIVA (e ela que define o preco agora),
+ * PROGRAMADA (voce aderiu e ainda nao comecou, ou aderiu mas outra promocao esta valendo) e
+ * "Nova proposta" (ainda nao aderiu).
+ */
+export type SituacaoPromocao = 'proposta' | 'programada' | 'ativa' | 'encerrada' | 'outra';
+
+/** "participando" = ativa ou programada (o vendedor ja aderiu). */
+export const participa = (s: SituacaoPromocao): boolean => s === 'ativa' || s === 'programada';
 
 /**
  * Tipos em que o ML cria a oferta pronta. Na API elas aparecem como started/pending mesmo quando
  * o vendedor NAO aderiu (conferido em 2026-11-03 no MLB4109133481: PRICE_MATCHING "started" e
- * SMART_LIGHTNING "pending" apareciam na tela do ML como "Nova proposta" com botao Participar,
- * enquanto o preco valendo era o de uma campanha propria).
+ * SMART_LIGHTNING "pending", sem data, apareciam na tela do ML como "Nova proposta").
+ * Ja no MLB3752079801 (2026-11-04) uma relampago com horario marcado (6/nov 0h-12h) aparecia como
+ * PROGRAMADA: oferta pronta COM data de inicio = o vendedor aceitou e o ML agendou.
  */
 const OFERTA_CRIADA_PELO_ML = new Set(['SMART', 'PRICE_MATCHING', 'PRICE_MATCHING_MELI_ALL', 'SMART_LIGHTNING', 'UNHEALTHY_STOCK']);
 
 /**
- * Situacao de uma promocao do anuncio. Com `promocaoAtivaId` (do sale_price), "participando" e a
- * que esta de fato definindo o preco; sem ele, cai no status cru da API.
+ * Situacao de uma promocao do anuncio. `promocaoAtivaId` vem do sale_price: a promocao que esta
+ * definindo o preco agora e a unica ATIVA, igual a tela do ML.
  */
 export function situacaoDaPromocao(
   tipo: string,
   status: string | undefined | null,
   promocaoId: string | null,
   promocaoAtivaId: string | null | undefined,
+  inicio?: string | null,
+  agora = Date.now(),
 ): SituacaoPromocao {
-  const base = situacaoDoStatus(status);
+  const s = String(status || '').toLowerCase();
+  const base = situacaoDoStatus(s);
   if (base === 'encerrada' || base === 'proposta' || base === 'outra') return base;
-  if (promocaoAtivaId && promocaoId && promocaoId === promocaoAtivaId) return 'participando';
-  if (OFERTA_CRIADA_PELO_ML.has(tipo)) return 'proposta';
-  return 'participando';
+  if (promocaoAtivaId && promocaoId && promocaoId === promocaoAtivaId) return 'ativa';
+  const ofertaPronta = OFERTA_CRIADA_PELO_ML.has(tipo);
+  const comecaDepois = !!inicio && Date.parse(inicio) > agora;
+  if (s === 'pending') return ofertaPronta && !inicio ? 'proposta' : 'programada';
+  // started
+  if (comecaDepois) return 'programada';
+  if (ofertaPronta) return 'proposta';
+  // Aderiu e ja comecou: e a ativa se nao sabemos qual define o preco; se sabemos e e outra,
+  // esta inscrita mas sem efeito agora.
+  return promocaoAtivaId ? 'programada' : 'ativa';
 }
 
 export function situacaoDoStatus(status: string | undefined | null): SituacaoPromocao {
   const s = String(status || '').toLowerCase();
   if (s === 'candidate') return 'proposta';
-  if (s === 'started' || s === 'pending' || s === 'programmed' || s === 'active') return 'participando';
+  if (s === 'started' || s === 'pending' || s === 'programmed' || s === 'active') return 'ativa';
   if (s === 'finished' || s === 'expired' || s === 'deleted') return 'encerrada';
   return 'outra';
 }
@@ -125,7 +144,7 @@ export function normalizarPromocao(raw: any, precoAtual: number | null, promocao
     rotulo: ROTULO_DO_TIPO[tipo] ?? tipo,
     nome: raw?.name ? String(raw.name) : null,
     status,
-    situacao: situacaoDaPromocao(tipo, status, promocaoId, promocaoAtivaId),
+    situacao: situacaoDaPromocao(tipo, status, promocaoId, promocaoAtivaId, raw?.start_date ?? null),
     // Em candidato, `price` vem 0 (campanha) ou proximo do cheio (relampago: 76,53 com sugerido 67,07):
     // o que o ML propoe e o sugerido. Em oferta ja criada (SMART, PRICE_MATCHING), `price` e o preco dela.
     precoProposto: candidato
@@ -243,7 +262,7 @@ export function montarLinha(
 
 /** Propostas abertas primeiro; dentro delas, as que menos tiram de cada venda. */
 export function ordenarLinhas(linhas: LinhaPromocao[]): LinhaPromocao[] {
-  const ordem: Record<SituacaoPromocao, number> = { proposta: 0, participando: 1, outra: 2, encerrada: 3 };
+  const ordem: Record<SituacaoPromocao, number> = { ativa: 0, programada: 1, proposta: 2, outra: 3, encerrada: 4 };
   return [...linhas].sort((a, b) => {
     if (ordem[a.situacao] !== ordem[b.situacao]) return ordem[a.situacao] - ordem[b.situacao];
     return (b.diferencaPorVenda ?? -Infinity) - (a.diferencaPorVenda ?? -Infinity);
@@ -352,7 +371,9 @@ async function doScan(): Promise<PromocoesResult> {
       if (promo.situacao === 'encerrada') continue;
       // "Desconto proprio"/"campanha propria" como candidato e so o convite a criar um desconto seu,
       // vem em todo anuncio e nao e proposta do ML.
-      if (promo.situacao === 'proposta' && (promo.tipo === 'PRICE_DISCOUNT' || promo.tipo === 'SELLER_CAMPAIGN')) continue;
+      // So o convite generico de "desconto proprio" (sem id nem nome) fica de fora: a tela do ML nao
+      // o mostra. Campanha propria sem adesao (ex.: "OUTUBRO 2026" com botao Participar) aparece.
+      if (promo.situacao === 'proposta' && promo.tipo === 'PRICE_DISCOUNT' && !promo.promocaoId && !promo.nome) continue;
       const chave = chaveDaPromocao(item.id, promo);
       vistas[chave] = anteriores[chave] ?? agora;
       const tarifaProposta = await tarifa(item, promo.precoProposto);
