@@ -4,10 +4,19 @@ import { ensureValidMlToken } from './mlOauthClient';
 
 export class MlApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** v39: corpo cru da resposta de erro (so preenchido na escrita, pra ir pro historico). */
+  corpo?: unknown;
+  constructor(status: number, message: string, corpo?: unknown) {
     super(message);
     this.name = 'MlApiError';
     this.status = status;
+    this.corpo = corpo;
+  }
+  /** Motivos que o ML costuma mandar em `cause` (lista de {message} ou strings). */
+  get causas(): string[] {
+    const c = (this.corpo as any)?.cause;
+    if (!Array.isArray(c)) return [];
+    return c.map((x: any) => (typeof x === 'string' ? x : x?.message || x?.code || JSON.stringify(x))).filter(Boolean);
   }
 }
 
@@ -815,3 +824,67 @@ export function parsePrecoDeVenda(d: any): PrecoDeVenda | null {
 export async function getSalePriceRaw(itemId: string): Promise<any> {
   return mlRequest<any>(`/items/${encodeURIComponent(itemId)}/sale_price?context=channel_marketplace`);
 }
+
+// --- ESCRITA (v39) ---------------------------------------------------------------------------
+// Tudo abaixo ALTERA dados reais da conta. So a adesao a promocoes usa, atras da trava
+// PROMOCOES_ENABLED + simulacao + confirmacao (core/promocoesAdesao.ts). Nenhuma ferramenta do
+// assistente/Gerente chama isto.
+
+/** POST com o token do ML. Sem retry de 429: repetir poderia aderir duas vezes. */
+async function mlPost<T>(path: string, body: unknown): Promise<T> {
+  let retried401 = false;
+  for (;;) {
+    const token = await ensureValidMlToken();
+    const res = await fetchWithTimeout(`${config.mlApiBaseUrl}${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    // 401 = token vencido: o ML recusou antes de gravar, entao repetir uma vez e seguro.
+    if (res.status === 401 && !retried401) {
+      retried401 = true;
+      continue;
+    }
+    const text = await res.text();
+    let data: any;
+    try {
+      data = text ? JSON.parse(text) : undefined;
+    } catch {
+      data = { message: text };
+    }
+    if (!res.ok) throw new MlApiError(res.status, data?.message || data?.error || `Erro HTTP ${res.status}`, data);
+    return data as T;
+  }
+}
+
+/**
+ * v39, DIAGNOSTICO: as rotas candidatas do custo de frete gratis que o vendedor paga num preco.
+ * A doc do ML nao abre daqui; o /debug/promocoes devolve as respostas cruas pra escolher a certa.
+ */
+export async function sondarCustosDaVenda(itemId: string, precos: number[]): Promise<any> {
+  const uid = await getMlUserId();
+  const item = await mlRequest<any>(`/items/${encodeURIComponent(itemId)}?attributes=id,price,listing_type_id,category_id,shipping,condition`);
+  const dims = item?.shipping?.dimensions;
+  const tentar = (p: string) => mlRequest<any>(p).catch((e: any) => ({ erro: e?.message || String(e), status: e?.status ?? null }));
+  const porPreco: Record<string, any> = {};
+  for (const preco of precos) {
+    const base = `item_price=${preco}&listing_type_id=${item?.listing_type_id}&mode=${item?.shipping?.mode ?? 'me2'}&condition=${item?.condition ?? 'new'}&logistic_type=${item?.shipping?.logistic_type ?? ''}&verbose=true`;
+    porPreco[String(preco)] = {
+      tarifa: await tentar(`/sites/${itemId.slice(0, 3)}/listing_prices?price=${preco}&listing_type_id=${item?.listing_type_id}&category_id=${item?.category_id}`),
+      freteGratisPorItem: await tentar(`/users/${uid}/shipping_options/free?item_id=${itemId}&${base}`),
+      freteGratisPorDimensao: dims ? await tentar(`/users/${uid}/shipping_options/free?dimensions=${encodeURIComponent(dims)}&${base}`) : 'anuncio sem shipping.dimensions',
+    };
+  }
+  return { shipping: item?.shipping ?? null, listingType: item?.listing_type_id, categoria: item?.category_id, porPreco, freteDoAnuncio: await tentar(`/items/${itemId}/shipping_options/free`) };
+}
+
+/** Dados basicos do anuncio pra simulacao (titulo, preco cheio, status). */
+export async function getItemBasico(itemId: string): Promise<{ id: string; title?: string; price?: number; status?: string }> {
+  return mlRequest<any>(`/items/${encodeURIComponent(itemId)}?attributes=id,title,price,status`);
+}
+
+/** Adere o anuncio a uma promocao (POST /seller-promotions/items/{id}). */
+export async function joinPromotion(itemId: string, corpo: Record<string, unknown>): Promise<any> {
+  return mlPost<any>(`/seller-promotions/items/${encodeURIComponent(itemId)}?app_version=v2`, corpo);
+}
+

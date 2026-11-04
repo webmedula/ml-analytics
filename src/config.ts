@@ -5,7 +5,7 @@ const dataDir = process.env.DATA_DIR || './data';
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v38 (2026-11-04)',
+  appVersion: 'analytics v39 (2026-11-04)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -28,6 +28,11 @@ export const config = {
   // Diagnostico de notas / candidatos a recriacao de anuncio
   /** v35: propostas de promocao do ML (Central de Promocoes). Leitura pura. */
   promocoesScanMaxItems: Number(process.env.PROMOCOES_SCAN_MAX_ITEMS || 500),
+  /**
+   * v39: liga a ADESAO a promocoes pelo painel (unica escrita no ML deste servico). Desligado,
+   * o painel so simula. Precisa tambem da permissao de escrita de promocoes no app do ML.
+   */
+  promocoesEnabled: String(process.env.PROMOCOES_ENABLED || '').toLowerCase() === 'true',
   promocoesScanIntervalHours: Number(process.env.PROMOCOES_SCAN_INTERVAL_HOURS || 6),
   ratingsScanMaxItems: Number(process.env.RATINGS_SCAN_MAX_ITEMS || 500),
   ratingsScanIntervalHours: Number(process.env.RATINGS_SCAN_INTERVAL_HOURS || 12),
@@ -102,6 +107,7 @@ export const config = {
   conversionCachePath: path.join(dataDir, 'conversion-cache.json'),
   ratingsCachePath: path.join(dataDir, 'listing-ratings-cache.json'),
   promocoesCachePath: path.join(dataDir, 'promocoes-cache.json'),
+  promocoesHistoricoPath: path.join(dataDir, 'promocoes-adesoes.json'),
   historyDir: path.join(dataDir, 'history'),
   tinyTokenStorePath: path.join(dataDir, 'tiny-token.json'),
   custosCachePath: path.join(dataDir, 'custos.json'),
