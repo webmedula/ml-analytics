@@ -783,7 +783,10 @@ export interface PrecoDeVenda {
   /** preco "cheio" do anuncio */
   precoCheio: number | null;
   /** id da promocao que esta definindo o preco agora (C-MLB..., P-MLB...), quando ha */
+  /** id da campanha que define o preco (P-MLB..., C-MLB...): metadata.campaign_id */
   promocaoAtivaId: string | null;
+  /** id da oferta (OFFER-MLB...): metadata.promotion_id; bate com o ref_id da promocao */
+  ofertaAtivaId: string | null;
   promocaoAtivaTipo: string | null;
 }
 
@@ -795,7 +798,11 @@ export function parsePrecoDeVenda(d: any): PrecoDeVenda | null {
   return {
     preco: n(d.amount),
     precoCheio: n(d.regular_amount),
-    promocaoAtivaId: meta.promotion_id ?? meta.campaign_id ?? null,
+    // Conferido em 2026-11-04 (MLB3752079801): campaign_id = "P-MLB18193008" (o id da promocao) e
+    // promotion_id = "OFFER-MLB3752079801-..." (o ref_id). Sem campaign_id (campanha propria),
+    // o promotion_id pode ser o proprio C-MLB...
+    promocaoAtivaId: meta.campaign_id ?? (meta.promotion_id && !String(meta.promotion_id).startsWith('OFFER-') ? meta.promotion_id : null),
+    ofertaAtivaId: meta.promotion_id ?? null,
     promocaoAtivaTipo: meta.promotion_type ? String(meta.promotion_type).toUpperCase() : null,
   };
 }

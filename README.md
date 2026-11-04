@@ -1,5 +1,12 @@
 # tiny-analytics
 
+> **v38 (2026-11-04):** a aba Promoções passa a bater com a tela do ML, conferido no MLB3752079801.
+> Mostra **Ativa** (a que define o preço; o `sale_price` traz `campaign_id` = id da promoção e
+> `promotion_id` = `ref_id` da oferta), **Programada** (status `pending`) e **Nova proposta**. A
+> campanha própria sem adesão (ex.: "OUTUBRO 2026") volta a aparecer. Candidatas do ML
+> (campanha, relâmpago, oferta do dia) não propõem preço acima do de hoje: o preço que a tela do
+> ML sugere não vem na API. A aba abre em "Todas".
+
 > **v37 (2026-11-03):** botão **Participar** em cada proposta da aba Promoções. Ele abre o
 > ml-actions (v21+) já na simulação da adesão. Este serviço continua só lendo. O link do ml-actions
 > passou a ser `https://actions.mcs.ind.br/`.

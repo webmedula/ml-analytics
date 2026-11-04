@@ -57,32 +57,47 @@ export const participa = (s: SituacaoPromocao): boolean => s === 'ativa' || s ==
  */
 const OFERTA_CRIADA_PELO_ML = new Set(['SMART', 'PRICE_MATCHING', 'PRICE_MATCHING_MELI_ALL', 'SMART_LIGHTNING', 'UNHEALTHY_STOCK']);
 
+/** O que o sale_price diz sobre a promocao que define o preco agora. */
+export interface PromocaoAtiva {
+  promocaoId?: string | null;
+  ofertaId?: string | null;
+}
+
+const ehAtiva = (promocaoId: string | null, ofertaId: string | null, a: PromocaoAtiva | null | undefined): boolean =>
+  !!a && ((!!a.promocaoId && promocaoId === a.promocaoId) || (!!a.ofertaId && ofertaId === a.ofertaId));
+
 /**
- * Situacao de uma promocao do anuncio. `promocaoAtivaId` vem do sale_price: a promocao que esta
- * definindo o preco agora e a unica ATIVA, igual a tela do ML.
+ * Situacao de uma promocao do anuncio, como a tela do ML mostra:
+ * - ATIVA: e a que define o preco agora (sale_price: campaign_id = id da promocao, ou
+ *   promotion_id = ref_id da oferta).
+ * - PROGRAMADA: status "pending" (a doc do ML: aprovada e programada). Conferido em 2026-11-04 no
+ *   MLB3752079801: SMART_LIGHTNING "pending" aparece na tela como "Oferta relampago 6/nov PROGRAMADA".
+ * - Nova proposta: candidata, ou oferta pronta do ML ("started") que nao esta definindo o preco
+ *   (ex.: PRICE_MATCHING "started" no MLB4109133481 aparecia como "Nova proposta").
  */
 export function situacaoDaPromocao(
   tipo: string,
   status: string | undefined | null,
   promocaoId: string | null,
-  promocaoAtivaId: string | null | undefined,
+  ativa: PromocaoAtiva | string | null | undefined,
   inicio?: string | null,
   agora = Date.now(),
+  ofertaId: string | null = null,
 ): SituacaoPromocao {
+  const a: PromocaoAtiva | null = typeof ativa === 'string' ? { promocaoId: ativa } : ativa ?? null;
   const s = String(status || '').toLowerCase();
   const base = situacaoDoStatus(s);
   if (base === 'encerrada' || base === 'proposta' || base === 'outra') return base;
-  if (promocaoAtivaId && promocaoId && promocaoId === promocaoAtivaId) return 'ativa';
-  const ofertaPronta = OFERTA_CRIADA_PELO_ML.has(tipo);
-  const comecaDepois = !!inicio && Date.parse(inicio) > agora;
-  if (s === 'pending') return ofertaPronta && !inicio ? 'proposta' : 'programada';
-  // started
-  if (comecaDepois) return 'programada';
-  if (ofertaPronta) return 'proposta';
-  // Aderiu e ja comecou: e a ativa se nao sabemos qual define o preco; se sabemos e e outra,
-  // esta inscrita mas sem efeito agora.
-  return promocaoAtivaId ? 'programada' : 'ativa';
+  if (ehAtiva(promocaoId, ofertaId, a)) return 'ativa';
+  if (s === 'pending') return 'programada';
+  if (inicio && Date.parse(inicio) > agora) return 'programada';
+  if (OFERTA_CRIADA_PELO_ML.has(tipo)) return 'proposta';
+  // Campanha a que o vendedor aderiu e ja comecou: e a ativa se nao sabemos qual define o preco.
+  return a?.promocaoId || a?.ofertaId ? 'programada' : 'ativa';
 }
+
+/** Candidatas que o proprio ML organiza: preco acima do de hoje nao faria efeito (vale o menor). */
+const CANDIDATA_DO_ML = new Set(['DEAL', 'LIGHTNING', 'DOD', 'MARKETPLACE_CAMPAIGN']);
 
 export function situacaoDoStatus(status: string | undefined | null): SituacaoPromocao {
   const s = String(status || '').toLowerCase();
@@ -132,24 +147,37 @@ export interface PromocaoNormalizada {
  * campo entre tipos de promocao (end_date x finish_date, ref_id x offer_id), e o que nao vier fica
  * null em vez de quebrar a varredura inteira.
  */
-export function normalizarPromocao(raw: any, precoAtual: number | null, promocaoAtivaId?: string | null): PromocaoNormalizada {
+export function normalizarPromocao(
+  raw: any,
+  precoAtual: number | null,
+  ativa?: PromocaoAtiva | string | null,
+  precoDeVendaHoje?: number | null,
+): PromocaoNormalizada {
   const tipo = String(raw?.type || raw?.promotion_type || 'DESCONHECIDO').toUpperCase();
   const status = String(raw?.status || '');
   const precoOriginal = positivo(raw?.original_price, precoAtual);
   const promocaoId = raw?.id ? String(raw.id) : raw?.promotion_id ? String(raw.promotion_id) : null;
   const candidato = situacaoDoStatus(status) === 'proposta';
+  const ofertaId = raw?.offer_id ?? raw?.ref_id ?? null;
+  // A tela do ML, para candidatas de campanha/relampago/oferta do dia, sugere um preco perto do de
+  // hoje (MLB3752079801: R$ 1.739,99 com o anuncio a R$ 1.733), nao o suggested_discounted_price
+  // da API (R$ 2.522,13). Esse numero da tela nao vem na API; o mais proximo e nao propor acima do
+  // preco de hoje, porque o ML aplica o menor preco e a adesao nao mudaria nada.
+  let precoProposto = candidato
+    ? positivo(raw?.suggested_discounted_price, raw?.max_discounted_price, raw?.price)
+    : positivo(raw?.price, raw?.deal_price, raw?.suggested_discounted_price);
+  const minimo = positivo(raw?.min_discounted_price);
+  if (candidato && CANDIDATA_DO_ML.has(tipo) && precoProposto != null && precoDeVendaHoje != null && precoDeVendaHoje < precoProposto) {
+    precoProposto = minimo != null ? Math.max(minimo, precoDeVendaHoje) : precoDeVendaHoje;
+  }
   return {
     promocaoId,
     tipo,
     rotulo: ROTULO_DO_TIPO[tipo] ?? tipo,
     nome: raw?.name ? String(raw.name) : null,
     status,
-    situacao: situacaoDaPromocao(tipo, status, promocaoId, promocaoAtivaId, raw?.start_date ?? null),
-    // Em candidato, `price` vem 0 (campanha) ou proximo do cheio (relampago: 76,53 com sugerido 67,07):
-    // o que o ML propoe e o sugerido. Em oferta ja criada (SMART, PRICE_MATCHING), `price` e o preco dela.
-    precoProposto: candidato
-      ? positivo(raw?.suggested_discounted_price, raw?.max_discounted_price, raw?.price)
-      : positivo(raw?.price, raw?.deal_price, raw?.suggested_discounted_price),
+    situacao: situacaoDaPromocao(tipo, status, promocaoId, ativa, raw?.start_date ?? null, Date.now(), ofertaId),
+    precoProposto,
     precoMinimo: positivo(raw?.min_discounted_price),
     precoMaximo: positivo(raw?.max_discounted_price),
     precoOriginal,
@@ -158,7 +186,7 @@ export function normalizarPromocao(raw: any, precoAtual: number | null, promocao
     inicio: raw?.start_date ?? null,
     fim: raw?.finish_date ?? raw?.end_date ?? null,
     prazoParaAderir: raw?.deadline_date ?? null,
-    ofertaId: raw?.offer_id ?? raw?.ref_id ?? null,
+    ofertaId,
   };
 }
 
@@ -367,7 +395,7 @@ async function doScan(): Promise<PromocoesResult> {
     const precoAtual = venda?.preco ?? precoCheio;
     const tarifaAtual = await tarifa(item, precoAtual);
     for (const raw of brutos) {
-      const promo = normalizarPromocao(raw, precoCheio, venda?.promocaoAtivaId);
+      const promo = normalizarPromocao(raw, precoCheio, venda ? { promocaoId: venda.promocaoAtivaId, ofertaId: venda.ofertaAtivaId } : null, venda?.preco ?? null);
       if (promo.situacao === 'encerrada') continue;
       // "Desconto proprio"/"campanha propria" como candidato e so o convite a criar um desconto seu,
       // vem em todo anuncio e nao e proposta do ML.
