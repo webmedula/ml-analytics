@@ -17,7 +17,7 @@ const L = REAL.map((r) => lerPromocao(r, ATIVA, 249.99, 172.69));
 describe('lerPromocao (mesma regra da aba)', () => {
   it('so a nova proposta fica aberta: ativa e programada nao', () => {
     expect(L.map((p) => [p.tipo, p.situacao, p.aberta, p.suportada])).toEqual([
-      ['SMART_LIGHTNING', 'proposta', true, true],
+      ['SMART_LIGHTNING', 'proposta', true, false],
       ['SMART', 'ativa', false, true],
       ['DEAL', 'programada', false, true],
       ['PRICE_DISCOUNT', 'proposta', true, false],
@@ -28,8 +28,8 @@ describe('lerPromocao (mesma regra da aba)', () => {
 });
 
 describe('montarPedido', () => {
-  it('relampago co-participada aceita a oferta pelo ref_id', () => {
-    expect(montarPedido(L[0], {}).corpo).toEqual({ promotion_type: 'SMART_LIGHTNING', promotion_id: 'P-MLB18055120', offer_id: 'CANDIDATE-MLB5332741758-77698728745' });
+  it('relampago co-participada fica para a tela do ML (o ML recusou o corpo de SMART com 400)', () => {
+    expect(() => montarPedido(L[0], {})).toThrow(/ainda nao sabe/);
   });
 
   it('11.11 propoe o preco de hoje (como a aba), dentro da faixa', () => {
