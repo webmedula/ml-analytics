@@ -839,7 +839,8 @@ async function confirmarAdesao() {
   const b = document.getElementById('promoModalBody');
   b.innerHTML = '<div class="muted">Enviando ao Mercado Livre…</div>';
   try {
-    await apiPost('/api/promocoes/aderir', { token: promoSim.token, confirmacao: 'ADERIR' });
+    const r = await apiPost('/api/promocoes/aderir', { token: promoSim.token, confirmacao: 'ADERIR' });
+    if (r.ok === false) throw new Error(r.mensagem || r.erro || 'recusado');
     b.innerHTML = '<div class="insight">Pronto: o anúncio entrou na promoção. Na aba ela já aparece como PROGRAMADA; na tela do ML pode levar alguns minutos.</div>';
     const l = (promocoes && promocoes.itens || []).find(x => x.itemId === promoSim.itemId && x.tipo === promoSim.promocao.tipo && (!promoSim.promocao.promocaoId || x.promocaoId === promoSim.promocao.promocaoId) && x.situacao === 'proposta');
     if (l) { l.situacao = 'programada'; renderPromocoes(); }
