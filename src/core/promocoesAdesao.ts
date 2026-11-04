@@ -28,7 +28,9 @@ const MODO_DO_TIPO: Record<string, Modo> = {
   SMART: 'oferta_pronta',
   PRICE_MATCHING: 'oferta_pronta',
   PRICE_MATCHING_MELI_ALL: 'oferta_pronta',
-  SMART_LIGHTNING: 'oferta_pronta',
+  // SMART_LIGHTNING fora: a doc do ML nao documenta a adesao, e o corpo de SMART (promotion_id +
+  // offer_id CANDIDATE-...) voltou 400 "Invalid request." sem motivo no MLB5332741758 (2026-11-04).
+  // Ate descobrir o formato, a relampago co-participada e aderida na tela do ML.
   UNHEALTHY_STOCK: 'oferta_pronta',
   DEAL: 'preco',
   DOD: 'preco',

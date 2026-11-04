@@ -663,7 +663,7 @@ let promoFiltro = 'todas';
 let promoBusca = '';
 const ehRelampago = l => /LIGHTNING|DOD/.test(l.tipo);
 // Tipos que a adesao sabe montar (src/core/promocoesAdesao.ts).
-const PROMO_ADERIVEL = /^(SMART|PRICE_MATCHING|PRICE_MATCHING_MELI_ALL|SMART_LIGHTNING|UNHEALTHY_STOCK|DEAL|DOD|LIGHTNING|MARKETPLACE_CAMPAIGN|SELLER_CAMPAIGN)$/;
+const PROMO_ADERIVEL = /^(SMART|PRICE_MATCHING|PRICE_MATCHING_MELI_ALL|UNHEALTHY_STOCK|DEAL|DOD|LIGHTNING|MARKETPLACE_CAMPAIGN|SELLER_CAMPAIGN)$/;
 const ehNovo = l => l.vistaPrimeiroEm && (Date.now() - Date.parse(l.vistaPrimeiroEm)) < 24 * 3600 * 1000;
 
 async function carregarPromocoes(forcar) {
