@@ -306,6 +306,16 @@ export function montarLinha(
   };
 }
 
+/**
+ * A tela do ML mostra UMA "Oferta relampago" por anuncio: quando ha a co-participada (SMART_LIGHTNING,
+ * com parte bancada pelo ML) como proposta, a relampago comum (LIGHTNING) candidata nao aparece.
+ * Conferido em 2026-11-05 no MLB3827163247: a API traz as duas candidatas, a tela so a co-participada.
+ */
+export function semRelampagoDuplicada(linhas: LinhaPromocao[]): LinhaPromocao[] {
+  const comCoParticipada = new Set(linhas.filter((l) => l.tipo === 'SMART_LIGHTNING' && l.situacao === 'proposta').map((l) => l.itemId));
+  return linhas.filter((l) => !(l.tipo === 'LIGHTNING' && l.situacao === 'proposta' && comCoParticipada.has(l.itemId)));
+}
+
 /** Propostas abertas primeiro; dentro delas, as que menos tiram de cada venda. */
 export function ordenarLinhas(linhas: LinhaPromocao[]): LinhaPromocao[] {
   const ordem: Record<SituacaoPromocao, number> = { ativa: 0, programada: 1, proposta: 2, outra: 3, encerrada: 4 };
@@ -468,7 +478,7 @@ async function doScan(): Promise<PromocoesResult> {
     anunciosAnalisados: attrs.length,
     anunciosComErro: erros,
     truncado: ids.length >= max,
-    itens: ordenarLinhas(itens),
+    itens: ordenarLinhas(semRelampagoDuplicada(itens)),
     vistas,
   };
   persist(result);

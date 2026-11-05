@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { situacaoDaPromocao, contaDaVenda, montarLinha, normalizarPromocao, ordenarLinhas, situacaoDoStatus, chaveDaPromocao, PromocoesResult } from './promocoes';
+import { situacaoDaPromocao, contaDaVenda, montarLinha, normalizarPromocao, ordenarLinhas, semRelampagoDuplicada, situacaoDoStatus, chaveDaPromocao, PromocoesResult } from './promocoes';
 import { filtrarPromocoes, linhaEmTexto } from './promocoesConsulta';
 
 const item = { id: 'MLB4109133481', title: 'Sensor Tpms', permalink: 'x', price: 78.9 };
@@ -216,6 +216,14 @@ describe('preco proposto como a tela do ML (MLB3827163247)', () => {
   it('campanha propria: teto da faixa (o % da campanha)', () => {
     const sc = { id: 'C-MLB5941729', type: 'SELLER_CAMPAIGN', status: 'candidate', price: 0, original_price: 299.99, min_discounted_price: 84, max_discounted_price: 284.99, suggested_discounted_price: 209.99 };
     expect(normalizarPromocao(sc, 299.99, null, 203.69).precoProposto).toBe(284.99);
+  });
+});
+
+describe('semRelampagoDuplicada (MLB3827163247)', () => {
+  it('esconde a relampago comum quando ha a co-participada como proposta', () => {
+    const l = (itemId: string, tipo: string, situacao: string) => ({ itemId, tipo, situacao }) as any;
+    const r = semRelampagoDuplicada([l('A', 'LIGHTNING', 'proposta'), l('A', 'SMART_LIGHTNING', 'proposta'), l('B', 'LIGHTNING', 'proposta'), l('C', 'LIGHTNING', 'proposta'), l('C', 'SMART_LIGHTNING', 'ativa')]);
+    expect(r.map((x) => `${x.itemId}:${x.tipo}`)).toEqual(['A:SMART_LIGHTNING', 'B:LIGHTNING', 'C:LIGHTNING', 'C:SMART_LIGHTNING']);
   });
 });
 
