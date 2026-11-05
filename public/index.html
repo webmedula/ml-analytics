@@ -162,6 +162,7 @@
       <h2 style="margin:0">Propostas de promoção do Mercado Livre</h2>
       <div class="row" id="promocoesControls"></div>
     </div>
+    <div id="acompBody"></div>
     <div id="promocoesBody"></div>
   </section>
 </main>
@@ -668,7 +669,7 @@ const ehNovo = l => l.vistaPrimeiroEm && (Date.now() - Date.parse(l.vistaPrimeir
 
 async function carregarPromocoes(forcar) {
   const el = document.getElementById('promocoesBody');
-  if (promocoes && !forcar) { renderPromocoes(); return; }
+  if (promocoes && !forcar) { renderPromocoes(); carregarAcompanhamento(); return; }
   el.innerHTML = '<div class="muted" style="padding:16px 0;text-align:center">' + (forcar ? 'varrendo todos os anúncios no ML (leva 1 a 3 minutos)...' : 'carregando...') + '</div>';
   try {
     promocoes = await api('/api/promocoes' + (forcar ? '?refresh=1' : ''));
@@ -677,6 +678,61 @@ async function carregarPromocoes(forcar) {
     return;
   }
   renderPromocoes();
+  carregarAcompanhamento();
+}
+
+// v46: bloco "Vencendo / sem promoção" (lê o histórico de fotos; não chama o ML).
+let acomp = null;
+const fmtBRT = iso => {
+  const t = Date.parse(iso || '');
+  if (isNaN(t)) return '';
+  const d = new Date(t - 3 * 3600 * 1000), p = n => String(n).padStart(2, '0');
+  return p(d.getUTCDate()) + '/' + p(d.getUTCMonth() + 1) + ' ' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
+};
+
+async function carregarAcompanhamento() {
+  const el = document.getElementById('acompBody');
+  try { acomp = await api('/api/promocoes/acompanhamento'); } catch (e) { acomp = null; el.innerHTML = '<div class="insight">Não consegui ler o acompanhamento: ' + esc(e.message) + '</div>'; return; }
+  renderAcompanhamento();
+}
+
+function renderAcompanhamento() {
+  const el = document.getElementById('acompBody');
+  if (!el || !acomp) return;
+  if (!acomp.historicoDisponivel) { el.innerHTML = '<div class="insight"><b>Vencendo / sem promoção:</b> histórico indisponível (banco local fora do ar).</div>'; return; }
+  if (!acomp.atualizadoEm) { el.innerHTML = '<div class="insight"><b>Vencendo / sem promoção:</b> aguardando a primeira varredura gravar o histórico.</div>'; return; }
+  const link = o => o.permalink ? '<a href="' + esc(o.permalink) + '" target="_blank" rel="noopener">' + esc(o.titulo || o.itemId) + '</a>' : esc(o.titulo || o.itemId);
+  const promo = o => o.promocao ? esc(o.promocao.nome || o.promocao.tipo) : '—';
+  const botoes = o => (o.propostas || []).filter(p => PROMO_ADERIVEL.test(p.tipo)).map(p =>
+    '<div style="margin-top:4px"><button class="secondary" onclick="abrirAdesao(\'' + esc(o.itemId) + '\',\'' + esc(p.promocaoId || '') + '\',\'' + esc(p.tipo) + '\')">Participar</button> ' +
+    '<span class="muted">' + esc(p.nome || p.tipo) + (p.precoProposto != null ? ' · ' + fmtMoney(p.precoProposto) : '') + (p.prazoParaAderir ? ' · aderir até ' + fmtBRT(p.prazoParaAderir) : '') + '</span></div>').join('');
+  const propsTxt = o => o.propostasAbertas ? o.propostasAbertas + ' proposta(s) aberta(s)' : 'nenhuma proposta aberta';
+  const secao = (titulo, lista, cab, linha, vazio) =>
+    '<h3 style="margin:14px 0 6px">' + titulo + ' <span class="muted">(' + lista.length + ')</span></h3>' +
+    (lista.length ? '<div class="table-scroll"><table><thead><tr>' + cab + '</tr></thead><tbody>' + lista.map(linha).join('') + '</tbody></table></div>'
+      : '<div class="muted">' + vazio + '</div>');
+  const termina = secao('⏳ Termina em até ' + acomp.diasAviso + ' dia(s)', acomp.terminaEmBreve,
+    '<th>Anúncio</th><th>Promoção</th><th>Fim (Brasília)</th><th>Propostas para substituir</th>',
+    o => '<tr' + (o.coberta ? ' style="color:#888"' : '') + '><td>' + link(o) + '<div class="muted">' + o.itemId + '</div></td>' +
+      '<td>' + promo(o) + '</td>' +
+      '<td><b>' + esc(o.prazo) + '</b><div class="muted">' + fmtBRT(o.fim) + '</div></td>' +
+      '<td>' + (o.coberta ? '<span class="muted">coberta: programada começa ' + fmtBRT(o.programadaInicio) + '</span>'
+        : (o.folga ? '<div class="muted">programada começa ' + fmtBRT(o.programadaInicio) + ': folga de ' + esc(o.folga) + ' (não cobre)</div>' : '') + propsTxt(o) + botoes(o)) + '</td></tr>',
+    'Nenhuma promoção termina nesse prazo.');
+  const sem = secao('🚫 Ficou sem promoção', acomp.ficouSemPromocao,
+    '<th>Anúncio</th><th>Última promoção</th><th>Sem promoção desde</th><th>Propostas abertas</th>',
+    o => '<tr><td>' + link(o) + '<div class="muted">' + o.itemId + '</div></td><td>' + promo(o) + '</td><td>' + fmtBRT(o.desde) + '</td><td>' + propsTxt(o) + botoes(o) + '</td></tr>',
+    'Nenhum anúncio ficou sem promoção.');
+  const semData = secao('❔ Sem data informada', acomp.semDataDeFim,
+    '<th>Anúncio</th><th>Promoção ativa</th><th>Fim</th>',
+    o => '<tr><td>' + link(o) + '<div class="muted">' + o.itemId + '</div></td><td>' + promo(o) + '</td><td class="muted">sem data informada</td></tr>',
+    'Toda promoção ativa informa a data de fim.');
+  const cobertas = acomp.terminaEmBreve.filter(o => o.coberta).length;
+  el.innerHTML = '<div class="insight" style="margin-bottom:12px"><div><b>Vencendo / sem promoção</b> · ' +
+    '<b>' + (acomp.terminaEmBreve.length - cobertas) + '</b> vencendo' + (cobertas ? ' (+' + cobertas + ' cobertas)' : '') +
+    ' · <b>' + acomp.ficouSemPromocao.length + '</b> sem promoção · <b>' + acomp.semDataDeFim.length + '</b> sem data de fim' +
+    '<br><span class="muted">Histórico de varreduras, horário de Brasília. Não chama o ML e não renova nada. Atualizado em ' + fmtBRT(acomp.atualizadoEm) + '.</span></div></div>' +
+    termina + sem + semData + '<hr style="margin:18px 0;border:0;border-top:1px solid #ddd">';
 }
 
 function setPromoFiltro(f) { promoFiltro = f; renderPromocoes(); }

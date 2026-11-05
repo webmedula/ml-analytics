@@ -7,6 +7,7 @@ import { margemDaVenda, ACAO_POR_ESTADO } from '../core/margem';
 import { serieDoAnuncio, vendasPorDia, variacao } from '../core/history';
 import { consultar, descreverEsquema } from '../db/banco';
 import { filtrarPromocoes } from '../core/promocoesConsulta';
+import { promocoesVencendo } from '../core/promocoesAcompanhamentoConsulta';
 
 /**
  * FERRAMENTAS DO ASSISTENTE.
@@ -156,6 +157,22 @@ export const FERRAMENTAS: DefinicaoDeFerramenta[] = [
         apenas_ml_banca: { type: 'boolean', description: 'so as propostas em que o ML banca parte do desconto' },
         busca: { type: 'string', description: 'MLB ou parte do titulo' },
         limite: { type: 'integer', description: '1 a 30, padrao 10' },
+      },
+    },
+  },
+  {
+    name: 'promocoes_vencendo',
+    description:
+      'Acompanhamento das promocoes que JA participam: (1) terminaEmBreve: promocao ativa que acaba nos proximos `dias` ' +
+      '(prazo "termina hoje"/"falta N dias", propostas abertas para substituir; coberta=true quando ha programada logo em seguida); ' +
+      '(2) ficouSemPromocao: anuncio que tinha promocao ativa/programada e agora nao tem nenhuma; (3) semDataDeFim: ativa sem data de fim informada. ' +
+      'resumoEmTexto vem pronto para mandar (sem as cobertas e sem as sem-data); null quando nao ha nada a avisar. ' +
+      'Somente leitura: NAO adere a nada nem renova promocao.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        dias: { type: 'integer', description: 'antecedencia do "termina em breve", em dias (padrao: configuracao, 3)' },
+        limite: { type: 'integer', description: 'itens por lista, 1 a 30, padrao 10' },
       },
     },
   },
@@ -371,6 +388,9 @@ export async function executarFerramenta(nome: string, entrada: any): Promise<un
 
     case 'promocoes_do_ml':
       return filtrarPromocoes(entrada ?? {});
+
+    case 'promocoes_vencendo':
+      return promocoesVencendo(entrada ?? {});
 
     case 'esquema_do_banco':
       return {
