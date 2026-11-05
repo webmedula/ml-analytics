@@ -1,5 +1,7 @@
 # tiny-analytics
 
+> **v42 (2026-11-05):** preço proposto das candidatas igual ao da tela do ML: campanha/relâmpago/oferta do dia = teto da faixa sem passar do preço de hoje; campanha própria = teto da faixa (o % da campanha). O `suggested_discounted_price` da API não é o que a tela mostra (MLB3827163247: 11.11 a 203,69, não 173,69; OUTUBRO a 284,99, não 209,99).
+>
 > **v41 (2026-11-04):** relâmpago co-participada (SMART_LIGHTNING) sai da adesão pelo painel: a doc do ML não documenta, e o corpo de SMART voltou 400 "Invalid request." no MLB5332741758. Adere-se pela tela do ML.
 >
 > **v40 (2026-11-04):** recusa do ML ao aderir volta com 200 + `ok:false` (com 502 o proxy apagava o motivo) e `/debug/promocoes-adesoes?key=` mostra a resposta crua. o "você recebe" da aba Promoções passa a usar o frete grátis que o ML cobra naquele preço (`/users/{id}/shipping_options/free?item_id=&item_price=`), em vez do frete médio de 30 dias. No MLB5332741758 bate com a tela: 172,69 − tarifa 20,72 − frete 21,75 = 130,22, e a 237,49 o frete sobe para 25,45 (183,54). A parte que o ML banca continua vindo de `meli_percentage`, que pode diferir alguns reais da tela (relâmpago: API 3,1% = 7,75, tela 10,25).

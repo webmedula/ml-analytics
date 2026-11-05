@@ -13,9 +13,9 @@ describe('normalizarPromocao', () => {
     expect(p).toMatchObject({ tipo: 'SMART', situacao: 'proposta', precoProposto: 700, precoOriginal: 1000, mlPercentual: 5, fim: 'b', ofertaId: 'OFFER-1' });
   });
 
-  it('candidato de campanha sem price usa o preco sugerido e o preco atual como original', () => {
+  it('candidato de campanha sem price usa o teto da faixa (como a tela do ML) e o preco atual como original', () => {
     const p = normalizarPromocao({ type: 'DEAL', status: 'candidate', suggested_discounted_price: 35.39, min_discounted_price: 30, max_discounted_price: 36 }, 78.9);
-    expect(p.precoProposto).toBe(35.39);
+    expect(p.precoProposto).toBe(36);
     expect(p.precoOriginal).toBe(78.9);
     expect(p.mlPercentual).toBeNull();
   });
@@ -116,9 +116,9 @@ describe('resposta real do ML (MLB4109133481)', () => {
     expect(n[3].rotulo).toContain('relampago');
   });
 
-  it('candidato usa o preco sugerido, nao o price', () => {
-    expect(n[0].precoProposto).toBe(67.07);
-    expect(n[5].precoProposto).toBe(27.99);
+  it('candidato usa o teto da faixa, nao o price nem o sugerido', () => {
+    expect(n[0].precoProposto).toBe(71.01);
+    expect(n[5].precoProposto).toBe(35.88);
   });
 
   it('oferta criada usa o proprio price e o ML banca a parte dele', () => {
@@ -205,3 +205,17 @@ describe('contaDaVenda com o frete gratis do ML (v40)', () => {
     expect(c.estimativa).toMatch(/frete medio/);
   });
 });
+
+// MLB3827163247 em 2026-11-05: tela do ML mostra 11.11 e Black Friday a 203,69 e OUTUBRO 2026 a 284,99.
+describe('preco proposto como a tela do ML (MLB3827163247)', () => {
+  it('campanha do ML: teto da faixa, sem passar do preco de hoje', () => {
+    const deal = { id: 'P-MLB17909028', type: 'DEAL', status: 'candidate', price: 0, original_price: 299.99, min_discounted_price: 60, max_discounted_price: 203.69, suggested_discounted_price: 173.69 };
+    expect(normalizarPromocao(deal, 299.99, null, 203.69).precoProposto).toBe(203.69);
+    expect(normalizarPromocao(deal, 299.99, null, 190).precoProposto).toBe(190);
+  });
+  it('campanha propria: teto da faixa (o % da campanha)', () => {
+    const sc = { id: 'C-MLB5941729', type: 'SELLER_CAMPAIGN', status: 'candidate', price: 0, original_price: 299.99, min_discounted_price: 84, max_discounted_price: 284.99, suggested_discounted_price: 209.99 };
+    expect(normalizarPromocao(sc, 299.99, null, 203.69).precoProposto).toBe(284.99);
+  });
+});
+
