@@ -45,7 +45,12 @@ export async function promocoesRoutes(app: FastifyInstance): Promise<void> {
     const lado = (r: PromiseSettledResult<any>) =>
       r.status === 'fulfilled' ? r.value : { erro: r.reason?.message || String(r.reason), status: r.reason?.status ?? null };
     // v39: tarifa e frete gratis no preco de hoje e no cheio, pra conferir o "voce recebe" com a tela do ML.
-    const precos = [preco.status === 'fulfilled' ? Number(preco.value?.amount) : NaN, preco.status === 'fulfilled' ? Number(preco.value?.regular_amount) : NaN].filter((n) => Number.isFinite(n) && n > 0);
+    const hoje = preco.status === 'fulfilled' ? Number(preco.value?.amount) : NaN;
+    // v45: tarifa tambem em cada preco proposto (precos baixos tem custo fixo por faixa que nao batia).
+    const propostos = item.status === 'fulfilled'
+      ? item.value.flatMap((p: any) => [Number(p?.price), Math.min(Number(p?.max_discounted_price), Number.isFinite(hoje) ? hoje : Infinity)])
+      : [];
+    const precos = [hoje, preco.status === 'fulfilled' ? Number(preco.value?.regular_amount) : NaN, ...propostos].filter((n) => Number.isFinite(n) && n > 0).slice(0, 8);
     const custos = await sondarCustosDaVenda(itemId, [...new Set(precos)]).catch((e: any) => ({ erro: e?.message || String(e) }));
     // v42: detalhe de cada oferta/candidata, pra procurar a parte do ML em reais (meli_percentage vem
     // arredondado em 1 casa e a tela mostra centavos diferentes).

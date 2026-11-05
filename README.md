@@ -1,5 +1,7 @@
 # tiny-analytics
 
+> **v45 (2026-11-05):** "Participar" volta para a relâmpago co-participada (SMART_LIGHTNING), agora com o estoque reservado e formatos alternativos tentados em ordem só enquanto o ML responder 400 (todas as tentativas vão pro histórico). Anúncio com envio por conta do comprador não desconta frete. `/debug/promocoes` traz a tarifa em cada preço proposto, com e sem os dados de envio.
+>
 > **v44 (2026-11-05):** "vs. hoje" compara com o que o vendedor já recebe na promoção ativa (incluindo a parte do ML), e proposta com preço acima do atual aparece como "não muda" (o ML aplica o menor preço; ex.: OUTUBRO a 2.754,05 com a ativa a 1.733 não dá +847). A aba abre no filtro "ML banca parte", com a ativa do anúncio ao lado para comparar.
 >
 > **v43 (2026-11-05):** a parte que o ML banca aparece como aproximada (~): `meli_percentage` vem com 1 casa (5,4% vs 5,437% real) e o detalhe em `/seller-promotions/{candidates,offers}/{id}` não traz valor em reais (conferido no MLB3827163247).
