@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { situacaoDaPromocao, contaDaVenda, montarLinha, normalizarPromocao, ordenarLinhas, semRelampagoDuplicada, situacaoDoStatus, chaveDaPromocao, PromocoesResult } from './promocoes';
+import { situacaoDaPromocao, contaDaVenda, montarLinha, normalizarPromocao, ordenarLinhas, semRelampagoDuplicada, compararComOQueJaParticipa, situacaoDoStatus, chaveDaPromocao, PromocoesResult } from './promocoes';
 import { filtrarPromocoes, linhaEmTexto } from './promocoesConsulta';
 
 const item = { id: 'MLB4109133481', title: 'Sensor Tpms', permalink: 'x', price: 78.9 };
@@ -227,3 +227,21 @@ describe('semRelampagoDuplicada (MLB3827163247)', () => {
   });
 });
 
+
+describe('compararComOQueJaParticipa (MLB3752079801, 2026-11-05)', () => {
+  const l = (o: any) => ({ itemId: 'A', precoAtual: 1733, voceRecebeHoje: 1409.14, mlBanca: 0, ...o }) as any;
+  it('compara com o que ja recebe na ativa (com a parte do ML) e ignora proposta acima do preco de hoje', () => {
+    const r = compararComOQueJaParticipa([
+      l({ tipo: 'SMART', situacao: 'ativa', precoProposto: 1733, voceRecebe: 1470.02, mlBanca: 60.88 }),
+      l({ tipo: 'SMART_LIGHTNING', situacao: 'proposta', precoProposto: 1733, voceRecebe: 1487.41, mlBanca: 78.27 }),
+      l({ tipo: 'SELLER_CAMPAIGN', situacao: 'proposta', precoProposto: 2754.05, voceRecebe: 2256.61 }),
+      l({ tipo: 'DEAL', situacao: 'proposta', precoProposto: 1733, voceRecebe: 1409.14 }),
+    ]);
+    expect(r.map((x) => [x.voceRecebeHoje, x.diferencaPorVenda, x.semEfeito])).toEqual([
+      [1470.02, 0, false],
+      [1470.02, 17.39, false],
+      [1470.02, null, true],
+      [1470.02, -60.88, false],
+    ]);
+  });
+});
