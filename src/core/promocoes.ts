@@ -5,6 +5,9 @@ import { logger } from '../logger';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import { getFreteGratis, getItemPromotionsRaw, getItemsAttributes, getSaleFee, getSalePriceRaw, getSellerItemIds, MlApiError, MlItemAttributes, parsePrecoDeVenda, PrecoDeVenda } from '../ml/mlClient';
 import { getConversion } from './conversion';
+import { getCatalogCompetition } from './catalogCompetition';
+import { bancoDisponivel, gravarFotosDePromocoes } from '../db/banco';
+import { montarFotos } from './promocoesAcompanhamento';
 
 /**
  * PROPOSTAS DE PROMOCAO DO MERCADO LIVRE (v35).
@@ -439,6 +442,8 @@ async function doScan(): Promise<PromocoesResult> {
   };
 
   const itens: LinhaPromocao[] = [];
+  /** v46: anuncios cuja leitura de promocoes deu certo (os outros geram foto invalida) */
+  const idsOk = new Set<string>();
   let erros = 0;
   let recusas = 0;
   let avisoDaApi: string | null = null;
@@ -461,6 +466,7 @@ async function doScan(): Promise<PromocoesResult> {
       return;
     }
     // Preco de venda de agora e qual promocao o define. Se falhar, segue com o preco cheio.
+    idsOk.add(item.id);
     const venda: PrecoDeVenda | null = await getSalePriceRaw(item.id).then(parsePrecoDeVenda).catch(() => null);
     const precoCheio = num(item.price);
     const precoAtual = venda?.preco ?? precoCheio;
@@ -506,10 +512,36 @@ async function doScan(): Promise<PromocoesResult> {
     vistas,
   };
   persist(result);
+  if (apiDisponivel) registrarFotos(result, attrs, idsOk, agora);
   logger.info(
     `[PROMOCOES] ${attrs.length} anuncios, ${result.itens.filter((i) => i.situacao === 'proposta').length} proposta(s) abertas, ${erros} erro(s).`,
   );
   return result;
+}
+
+/**
+ * v46: grava o historico de fotos. Nunca derruba a varredura: sem banco (ou com erro), o painel
+ * segue como na v45 e o bloco novo mostra "historico indisponivel".
+ */
+function registrarFotos(result: PromocoesResult, attrs: MlItemAttributes[], idsOk: Set<string>, tiradaEm: string): void {
+  try {
+    if (!bancoDisponivel()) {
+      logger.warn('[PROMOCOES] Banco indisponivel: fotos de promocoes nao gravadas.');
+      return;
+    }
+    const cc = getCatalogCompetition();
+    const buybox = (id: string) => {
+      const c = cc?.items.find((x) => x.itemId === id);
+      return c
+        ? { situacao: c.situacao ?? null, statusMl: c.statusMl ?? null, precoParaGanhar: c.precoParaGanhar ?? null, atualizadoEm: cc?.updatedAt ?? null }
+        : null;
+    };
+    const fotos = montarFotos({ tiradaEm, itens: result.itens, anuncios: attrs, idsOk, truncado: result.truncado, buybox });
+    const r = gravarFotosDePromocoes(fotos, config.promocoesFotosRetencaoDias);
+    logger.info(`[PROMOCOES] ${r.gravadas} foto(s) gravada(s)${r.apagadas ? `, ${r.apagadas} antiga(s) apagada(s)` : ''}.`);
+  } catch (err: any) {
+    logger.warn('[PROMOCOES] Falha ao gravar as fotos de promocoes:', err?.message || err);
+  }
 }
 
 export function startPromocoesLoop(): void {

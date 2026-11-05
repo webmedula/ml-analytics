@@ -3,9 +3,15 @@ import path from 'node:path';
 
 const dataDir = process.env.DATA_DIR || './data';
 
+/** Inteiro > 0 vindo do ambiente; vazio, texto ou zero/negativo caem no padrao. */
+function inteiroPositivo(v: string | undefined, padrao: number): number {
+  const n = Math.trunc(Number(v));
+  return v && Number.isFinite(n) && n > 0 ? n : padrao;
+}
+
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v45 (2026-11-05)',
+  appVersion: 'analytics v46 (2026-11-05)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -34,6 +40,12 @@ export const config = {
    */
   promocoesEnabled: String(process.env.PROMOCOES_ENABLED || '').toLowerCase() === 'true',
   promocoesScanIntervalHours: Number(process.env.PROMOCOES_SCAN_INTERVAL_HOURS || 6),
+  /** v46: antecedencia do "termina em breve", em dias. */
+  promocoesAvisoDias: inteiroPositivo(process.env.PROMOCOES_AVISO_DIAS, 3),
+  /** v46: quanto tempo um anuncio fica em "ficou sem promocao". */
+  promocoesSemPromoDias: inteiroPositivo(process.env.PROMOCOES_SEM_PROMO_DIAS, 14),
+  /** v46: retencao do historico de fotos de promocoes. */
+  promocoesFotosRetencaoDias: inteiroPositivo(process.env.PROMOCOES_FOTOS_RETENCAO_DIAS, 180),
   ratingsScanMaxItems: Number(process.env.RATINGS_SCAN_MAX_ITEMS || 500),
   ratingsScanIntervalHours: Number(process.env.RATINGS_SCAN_INTERVAL_HOURS || 12),
   /** Nota minima aceitavel: abaixo disso o anuncio vira candidato. */

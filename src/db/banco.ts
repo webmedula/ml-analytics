@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { config } from '../config';
 import { logger } from '../logger';
+import type { FotoPromocao, PropostaFoto } from '../core/promocoesAcompanhamento';
 
 /**
  * BANCO LOCAL (SQLite) — onde tudo fica guardado de verdade.
@@ -124,6 +125,35 @@ function migrar(banco: DatabaseSync): void {
       duracao_ms    INTEGER,
       erro          TEXT
     );
+
+    -- v46: uma linha por anuncio por varredura de promocoes. So ACUMULA (limpeza por retencao):
+    -- e o que permite dizer "tinha promocao e deixou de ter". varredura_ok=0: a foto existe, mas
+    -- nao entra em comparacao (varredura truncada ou anuncio com erro).
+    CREATE TABLE IF NOT EXISTS promocoes_fotos (
+      id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+      tirada_em                 TEXT NOT NULL,
+      item_id                   TEXT NOT NULL,
+      titulo                    TEXT,
+      permalink                 TEXT,
+      status_anuncio            TEXT,
+      preco_atual               REAL,
+      preco_cheio               REAL,
+      promo_ativa_tipo          TEXT,
+      promo_ativa_id            TEXT,
+      promo_ativa_nome          TEXT,
+      promo_ativa_fim           TEXT,
+      promo_programada_tipo     TEXT,
+      promo_programada_inicio   TEXT,
+      promo_programada_fim      TEXT,
+      propostas_abertas         INTEGER,
+      propostas_json            TEXT,
+      buybox_situacao           TEXT,
+      buybox_status_ml          TEXT,
+      buybox_preco_para_ganhar  REAL,
+      buybox_atualizado_em      TEXT,
+      varredura_ok              INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_promocoes_fotos_item ON promocoes_fotos(item_id, tirada_em);
   `);
 }
 
@@ -232,4 +262,118 @@ export function descreverEsquema(): string {
       return `${t.sql};\n-- ${linhas[0]?.n ?? 0} linha(s)`;
     })
     .join('\n\n');
+}
+
+// --------------------------------------------------------------- v46: fotos de promocoes
+
+/** O banco abre? Sem lancar excecao: o acompanhamento cai para o comportamento da v45 se nao. */
+export function bancoDisponivel(): boolean {
+  try {
+    abrirBanco();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function dePromocaoLinha(r: any): FotoPromocao {
+  let propostas: PropostaFoto[] = [];
+  try {
+    propostas = r.propostas_json ? JSON.parse(r.propostas_json) : [];
+  } catch {
+    propostas = [];
+  }
+  return {
+    itemId: r.item_id,
+    tiradaEm: r.tirada_em,
+    titulo: r.titulo ?? null,
+    permalink: r.permalink ?? null,
+    statusAnuncio: r.status_anuncio ?? null,
+    precoAtual: r.preco_atual ?? null,
+    precoCheio: r.preco_cheio ?? null,
+    ativa: r.promo_ativa_tipo
+      ? { tipo: r.promo_ativa_tipo, id: r.promo_ativa_id ?? null, nome: r.promo_ativa_nome ?? null, fim: r.promo_ativa_fim ?? null }
+      : null,
+    programada: r.promo_programada_tipo
+      ? { tipo: r.promo_programada_tipo, inicio: r.promo_programada_inicio ?? null, fim: r.promo_programada_fim ?? null }
+      : null,
+    propostasAbertas: r.propostas_abertas ?? 0,
+    propostas,
+    buybox:
+      r.buybox_situacao != null || r.buybox_status_ml != null || r.buybox_atualizado_em != null
+        ? {
+            situacao: r.buybox_situacao ?? null,
+            statusMl: r.buybox_status_ml ?? null,
+            precoParaGanhar: r.buybox_preco_para_ganhar ?? null,
+            atualizadoEm: r.buybox_atualizado_em ?? null,
+          }
+        : null,
+    varreduraOk: !!r.varredura_ok,
+  };
+}
+
+/** Grava as fotos de uma varredura (transacao unica) e apaga o que passou da retencao. */
+export function gravarFotosDePromocoes(fotos: FotoPromocao[], retencaoDias: number, agora = Date.now()): { gravadas: number; apagadas: number } {
+  const banco = abrirBanco();
+  const ins = banco.prepare(`
+    INSERT INTO promocoes_fotos (
+      tirada_em, item_id, titulo, permalink, status_anuncio, preco_atual, preco_cheio,
+      promo_ativa_tipo, promo_ativa_id, promo_ativa_nome, promo_ativa_fim,
+      promo_programada_tipo, promo_programada_inicio, promo_programada_fim,
+      propostas_abertas, propostas_json,
+      buybox_situacao, buybox_status_ml, buybox_preco_para_ganhar, buybox_atualizado_em, varredura_ok
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  banco.exec('BEGIN');
+  try {
+    for (const f of fotos) {
+      ins.run(
+        f.tiradaEm, f.itemId, f.titulo, f.permalink, f.statusAnuncio, f.precoAtual, f.precoCheio,
+        f.ativa?.tipo ?? null, f.ativa?.id ?? null, f.ativa?.nome ?? null, f.ativa?.fim ?? null,
+        f.programada?.tipo ?? null, f.programada?.inicio ?? null, f.programada?.fim ?? null,
+        f.propostasAbertas, JSON.stringify(f.propostas),
+        f.buybox?.situacao ?? null, f.buybox?.statusMl ?? null, f.buybox?.precoParaGanhar ?? null, f.buybox?.atualizadoEm ?? null,
+        f.varreduraOk ? 1 : 0,
+      );
+    }
+    const corte = new Date(agora - retencaoDias * 86400000).toISOString();
+    const r = banco.prepare('DELETE FROM promocoes_fotos WHERE tirada_em < ?').run(corte);
+    banco.exec('COMMIT');
+    return { gravadas: fotos.length, apagadas: Number(r.changes ?? 0) };
+  } catch (err) {
+    banco.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/** Fotos da varredura mais recente (todas, validas ou nao). */
+export function fotosDaUltimaVarredura(): FotoPromocao[] {
+  const rows = abrirBanco()
+    .prepare('SELECT * FROM promocoes_fotos WHERE tirada_em = (SELECT MAX(tirada_em) FROM promocoes_fotos)')
+    .all();
+  return rows.map(dePromocaoLinha);
+}
+
+/**
+ * Fotos VALIDAS desde `desdeIso`, anteriores a varredura `ate` (exclusive), da mais nova para a mais
+ * antiga, agrupadas por anuncio.
+ */
+export function historicoValido(desdeIso: string, ateIso: string): Map<string, FotoPromocao[]> {
+  const rows = abrirBanco()
+    .prepare('SELECT * FROM promocoes_fotos WHERE varredura_ok = 1 AND tirada_em >= ? AND tirada_em < ? ORDER BY item_id, tirada_em DESC')
+    .all(desdeIso, ateIso);
+  const m = new Map<string, FotoPromocao[]>();
+  for (const r of rows) {
+    const f = dePromocaoLinha(r);
+    if (!m.has(f.itemId)) m.set(f.itemId, []);
+    m.get(f.itemId)!.push(f);
+  }
+  return m;
+}
+
+/** Ultimas N fotos de um anuncio (validas ou nao), da mais nova para a mais antiga. */
+export function ultimasFotosDoAnuncio(itemId: string, n: number): FotoPromocao[] {
+  return abrirBanco()
+    .prepare('SELECT * FROM promocoes_fotos WHERE item_id = ? ORDER BY tirada_em DESC, id DESC LIMIT ?')
+    .all(itemId, n)
+    .map(dePromocaoLinha);
 }

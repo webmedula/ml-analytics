@@ -3,6 +3,8 @@ import { getMlAuthStatus } from '../ml/mlOauthClient';
 import { getItemPromotionsRaw, getSalePriceRaw, getSellerPromotionsRaw, sondarCustosDaVenda, sondarDetalheDaOferta } from '../ml/mlClient';
 import { getPromocoes, refreshPromocoes } from '../core/promocoes';
 import { logger } from '../logger';
+import { bancoDisponivel, ultimasFotosDoAnuncio } from '../db/banco';
+import { obterAcompanhamento } from '../core/promocoesAcompanhamentoConsulta';
 import { config } from '../config';
 import { AdesaoBloqueada, aderir, lerHistoricoAdesoes, listarPromocoes, simularAdesao } from '../core/promocoesAdesao';
 
@@ -32,6 +34,24 @@ export async function promocoesRoutes(app: FastifyInstance): Promise<void> {
     refreshPromocoes().catch((err) => logger.warn('[PROMOCOES] Falha no refresh manual:', err?.message || err));
     reply.code(202);
     return { mensagem: 'Varredura de promocoes iniciada.' };
+  });
+
+  /** v46: vencendo / ficou sem promocao / sem data de fim (le o historico de fotos; nao chama o ML). */
+  app.get('/api/promocoes/acompanhamento', async (req) => {
+    const dias = Number((req.query as { dias?: string } | undefined)?.dias);
+    return obterAcompanhamento({ dias: Number.isFinite(dias) && dias > 0 ? dias : undefined });
+  });
+
+  /** v46: ultimas fotos de um anuncio, pra conferir com a tela do ML. ?n=20 (1 a 100). */
+  app.get('/debug/promocoes/fotos/:itemId', async (req, reply) => {
+    const { itemId } = req.params as { itemId: string };
+    const n = Math.min(100, Math.max(1, Math.trunc(Number((req.query as { n?: string } | undefined)?.n)) || 20));
+    if (!bancoDisponivel()) {
+      reply.code(503);
+      return { mensagem: 'Banco local indisponivel.' };
+    }
+    const fotos = ultimasFotosDoAnuncio(itemId.toUpperCase(), n);
+    return { itemId: itemId.toUpperCase(), total: fotos.length, fotos };
   });
 
   /** JSON cru do ML — pra conferir nomes de campo contra a tela do vendedor. */
