@@ -874,6 +874,7 @@ export async function sondarCustosDaVenda(itemId: string, precos: number[]): Pro
     const base = `item_price=${preco}&listing_type_id=${item?.listing_type_id}&mode=${item?.shipping?.mode ?? 'me2'}&condition=${item?.condition ?? 'new'}&logistic_type=${item?.shipping?.logistic_type ?? ''}&verbose=true`;
     porPreco[String(preco)] = {
       tarifa: await tentar(`/sites/${itemId.slice(0, 3)}/listing_prices?price=${preco}&listing_type_id=${item?.listing_type_id}&category_id=${item?.category_id}`),
+      tarifaComEnvio: await tentar(`/sites/${itemId.slice(0, 3)}/listing_prices?price=${preco}&listing_type_id=${item?.listing_type_id}&category_id=${item?.category_id}&shipping_mode=${item?.shipping?.mode ?? ''}&logistic_type=${item?.shipping?.logistic_type ?? ''}&free_shipping=${item?.shipping?.free_shipping ? 'true' : 'false'}`),
       freteGratisPorItem: await tentar(`/users/${uid}/shipping_options/free?item_id=${itemId}&${base}`),
       freteGratisPorDimensao: dims ? await tentar(`/users/${uid}/shipping_options/free?dimensions=${encodeURIComponent(dims)}&${base}`) : 'anuncio sem shipping.dimensions',
     };

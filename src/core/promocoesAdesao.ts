@@ -23,14 +23,16 @@ import { marcarAderida, normalizarPromocao, PromocaoAtiva } from './promocoes';
 export class AdesaoBloqueada extends Error {}
 
 /** Tipos que a adesao suporta e o que cada um precisa. */
-type Modo = 'oferta_pronta' | 'preco' | 'preco_e_estoque' | 'so_campanha';
+type Modo = 'oferta_pronta' | 'preco' | 'preco_e_estoque' | 'so_campanha' | 'relampago_coparticipada';
 const MODO_DO_TIPO: Record<string, Modo> = {
   SMART: 'oferta_pronta',
   PRICE_MATCHING: 'oferta_pronta',
   PRICE_MATCHING_MELI_ALL: 'oferta_pronta',
-  // SMART_LIGHTNING fora: a doc do ML nao documenta a adesao, e o corpo de SMART (promotion_id +
-  // offer_id CANDIDATE-...) voltou 400 "Invalid request." sem motivo no MLB5332741758 (2026-11-04).
-  // Ate descobrir o formato, a relampago co-participada e aderida na tela do ML.
+  // SMART_LIGHTNING (relampago co-participada): a doc do ML nao documenta a adesao. O corpo de SMART
+  // (promotion_id + offer_id CANDIDATE-...) voltou 400 sem motivo no MLB5332741758 (2026-11-04). Como
+  // e relampago, o ML deve exigir o estoque reservado: tenta formatos com stock, um de cada vez, so
+  // enquanto o ML responder 400 (recusa = nada foi gravado). Todas as tentativas vao pro historico.
+  SMART_LIGHTNING: 'relampago_coparticipada',
   UNHEALTHY_STOCK: 'oferta_pronta',
   DEAL: 'preco',
   DOD: 'preco',
@@ -110,6 +112,8 @@ export function lerPromocao(raw: any, ativa: PromocaoAtiva | null = null, precoC
 
 export interface PedidoDeAdesao {
   corpo: Record<string, unknown>;
+  /** formatos alternativos, tentados em ordem so se o ML recusar o anterior com 400 */
+  alternativas?: Record<string, unknown>[];
   precoFinal: number | null;
 }
 
@@ -132,6 +136,23 @@ export function montarPedido(p: PromocaoDoAnuncio, escolha: { preco?: number | n
     return { corpo: { ...base, offer_id: p.ofertaId }, precoFinal: p.precoOferta };
   }
   if (modo === 'so_campanha') return { corpo: base, precoFinal: p.precoOferta ?? p.precoSugerido };
+
+  if (modo === 'relampago_coparticipada') {
+    const estoque = num(escolha.estoque) ?? p.estoqueMinimo ?? 1;
+    if (p.estoqueMinimo != null && estoque < p.estoqueMinimo) throw new AdesaoBloqueada(`A relampago exige ao menos ${p.estoqueMinimo} unidade(s).`);
+    if (p.estoqueMaximo != null && estoque > p.estoqueMaximo) throw new AdesaoBloqueada(`A relampago aceita no maximo ${p.estoqueMaximo} unidade(s).`);
+    const stock = Math.trunc(estoque);
+    const comOferta = p.ofertaId ? { offer_id: p.ofertaId } : {};
+    return {
+      corpo: { ...base, ...comOferta, stock },
+      alternativas: [
+        { ...base, stock },
+        ...(p.precoOferta ? [{ ...base, deal_price: p.precoOferta, stock }] : []),
+        ...(p.precoOferta ? [{ ...base, ...comOferta, deal_price: p.precoOferta, stock }] : []),
+      ],
+      precoFinal: p.precoOferta,
+    };
+  }
 
   const preco = num(escolha.preco) ?? p.precoSugerido ?? p.precoMaximo;
   if (preco == null || preco <= 0) throw new AdesaoBloqueada('Informe o preco da oferta.');
@@ -158,6 +179,7 @@ export interface SimulacaoAdesao {
   precoCheio: number | null;
   promocao: PromocaoDoAnuncio;
   corpo: Record<string, unknown>;
+  alternativas?: Record<string, unknown>[];
   precoFinal: number | null;
   descontoPercentual: number | null;
   mlBanca: number | null;
@@ -203,11 +225,12 @@ export async function simularAdesao(
   const promo = acharPromocao(lista, pedido.promocaoId, pedido.tipo);
   if (!promo) throw new AdesaoBloqueada('Essa promocao nao aparece mais para este anuncio no ML (pode ter encerrado).');
 
-  const { corpo, precoFinal } = montarPedido(promo, pedido);
+  const { corpo, alternativas, precoFinal } = montarPedido(promo, pedido);
   const precoCheio = num(item?.price);
   const avisos: string[] = [];
   if (item?.status !== 'active') avisos.push(`O anuncio esta "${item?.status}", nao ativo.`);
   if (promo.tipo === 'LIGHTNING' || promo.tipo === 'SMART_LIGHTNING') avisos.push('Relampago tem poucas horas e estoque reservado: confira o estoque antes.');
+  if (promo.tipo === 'SMART_LIGHTNING') avisos.push('Relampago co-participada: o ML nao documenta o formato da adesao. O sistema tenta alguns formatos; se o ML recusar todos, nada muda e a adesao fica pela tela do ML.');
   const outras = lista.filter((p) => p !== promo && (p.situacao === 'ativa' || p.situacao === 'programada'));
   if (outras.length) avisos.push(`O anuncio ja esta em: ${outras.map((o) => o.nome || o.rotulo).join(', ')}. O ML aplica o menor preco entre elas.`);
 
@@ -219,6 +242,7 @@ export async function simularAdesao(
     precoCheio,
     promocao: promo,
     corpo,
+    alternativas,
     precoFinal,
     descontoPercentual: precoCheio && precoFinal ? r2((1 - precoFinal / precoCheio) * 100) : null,
     mlBanca: promo.mlPercentual && (promo.precoOriginal ?? precoCheio) ? r2(((promo.precoOriginal ?? precoCheio)! * promo.mlPercentual) / 100) : null,
@@ -269,19 +293,32 @@ export async function aderir(token: string): Promise<RegistroAdesao> {
   simulacoes.delete(token); // um token, uma adesao: clique duplo nao vira dois POST
 
   const base = { quando: new Date().toISOString(), itemId: sim.itemId, titulo: sim.titulo, tipo: sim.promocao.tipo, promocaoId: sim.promocao.promocaoId, nome: sim.promocao.nome, corpo: sim.corpo, precoFinal: sim.precoFinal };
-  try {
-    const resposta = await joinPromotion(sim.itemId, sim.corpo);
-    const r: RegistroAdesao = { ...base, status: 'sucesso', respostaMl: resposta, erro: null };
-    gravar(r);
-    marcarAderida(sim.itemId, sim.promocao.tipo, sim.promocao.promocaoId);
-    logger.info(`[PROMOCAO] Aderiu ${sim.itemId} a ${sim.promocao.tipo} ${sim.promocao.promocaoId ?? ''}.`);
-    return r;
-  } catch (err: any) {
+  const corpos = [sim.corpo, ...(sim.alternativas ?? [])];
+  const tentativas: { corpo: Record<string, unknown>; resposta: unknown }[] = [];
+  let ultimoErro: any = null;
+  for (const corpo of corpos) {
+    try {
+      const resposta = await joinPromotion(sim.itemId, corpo);
+      const r: RegistroAdesao = { ...base, corpo, status: 'sucesso', respostaMl: tentativas.length ? { resposta, recusadasAntes: tentativas } : resposta, erro: null };
+      gravar(r);
+      marcarAderida(sim.itemId, sim.promocao.tipo, sim.promocao.promocaoId);
+      logger.info(`[PROMOCAO] Aderiu ${sim.itemId} a ${sim.promocao.tipo} ${sim.promocao.promocaoId ?? ''} com ${JSON.stringify(corpo)}.`);
+      return r;
+    } catch (err: any) {
+      ultimoErro = err;
+      tentativas.push({ corpo, resposta: err instanceof MlApiError ? err.corpo ?? { status: err.status, message: err.message } : String(err?.message || err) });
+      // So segue pro proximo formato quando o ML recusou o pedido (400). Qualquer outra coisa
+      // (timeout, 5xx) pode ter gravado: para aqui.
+      if (!(err instanceof MlApiError && err.status === 400)) break;
+    }
+  }
+  {
+    const err = ultimoErro;
     const r: RegistroAdesao = {
       ...base,
       status: 'erro',
-      respostaMl: err instanceof MlApiError ? err.corpo : null,
-      erro: err instanceof MlApiError ? `${err.status}: ${err.message}${err.causas.length ? ' — ' + err.causas.join('; ') : ''}` : String(err?.message || err),
+      respostaMl: tentativas.length > 1 ? { tentativas } : tentativas[0]?.resposta ?? null,
+      erro: err instanceof MlApiError ? `${err.status}: ${err.message}${err.causas.length ? ' — ' + err.causas.join('; ') : ''}${tentativas.length > 1 ? ` (${tentativas.length} formatos tentados)` : ''}` : String(err?.message || err),
     };
     gravar(r);
     logger.warn(`[PROMOCAO] ML recusou a adesao de ${sim.itemId}: ${r.erro}`);

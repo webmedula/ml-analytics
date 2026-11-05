@@ -478,7 +478,9 @@ async function doScan(): Promise<PromocoesResult> {
       vistas[chave] = anteriores[chave] ?? agora;
       const tarifaProposta = await tarifa(item, promo.precoProposto);
       const freteProposto = await freteGratis(item, promo.precoProposto);
-      const media = fretePorItem.get(item.id) ?? null;
+      // Envio por conta do comprador: o vendedor nao paga frete (MLB4466707117, 2026-11-05: a tela do
+      // ML nao desconta frete nenhum). A media de 30 dias so vale para quem oferece frete gratis.
+      const media = item.shipping?.free_shipping === false ? 0 : fretePorItem.get(item.id) ?? null;
       itens.push(
         montarLinha(
           item,
