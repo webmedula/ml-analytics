@@ -1,5 +1,7 @@
 # tiny-analytics
 
+> **v43 (2026-11-05):** a parte que o ML banca aparece como aproximada (~): `meli_percentage` vem com 1 casa (5,4% vs 5,437% real) e o detalhe em `/seller-promotions/{candidates,offers}/{id}` não traz valor em reais (conferido no MLB3827163247).
+>
 > **v42 (2026-11-05):** a relâmpago comum (LIGHTNING) candidata some quando o anúncio tem a co-participada (SMART_LIGHTNING) como proposta, como na tela do ML. preço proposto das candidatas igual ao da tela do ML: campanha/relâmpago/oferta do dia = teto da faixa sem passar do preço de hoje; campanha própria = teto da faixa (o % da campanha). O `suggested_discounted_price` da API não é o que a tela mostra (MLB3827163247: 11.11 a 203,69, não 173,69; OUTUBRO a 284,99, não 209,99).
 >
 > **v41 (2026-11-04):** relâmpago co-participada (SMART_LIGHTNING) sai da adesão pelo painel: a doc do ML não documenta, e o corpo de SMART voltou 400 "Invalid request." no MLB5332741758. Adere-se pela tela do ML.

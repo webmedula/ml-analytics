@@ -747,8 +747,8 @@ function renderPromocoes() {
         '<td>' + esc(l.rotulo) + (l.nome && l.nome !== l.rotulo ? '<div class="muted">' + esc(l.nome) + '</div>' : '') + '<div style="margin-top:4px">' + tags + '</div></td>' +
         '<td class="muted">' + (periodo || '—') + (l.prazoParaAderir ? '<div>aderir até ' + fmtData(l.prazoParaAderir) + '</div>' : '') + '</td>' +
         '<td class="num">' + fmtMoney(l.precoProposto) + (l.descontoPercentual != null ? '<div class="muted">−' + String(l.descontoPercentual).replace('.', ',') + '% do cheio</div>' : '') + faixa + '</td>' +
-        '<td class="num">' + (l.mlBanca > 0 ? fmtMoney(l.mlBanca) : '—') + '</td>' +
-        '<td class="num">' + fmtMoney(l.voceRecebe) + '</td>' +
+        '<td class="num">' + (l.mlBanca > 0 ? '~' + fmtMoney(l.mlBanca) : '—') + '</td>' +
+        '<td class="num">' + (l.mlBanca > 0 && l.voceRecebe != null ? '~' : '') + fmtMoney(l.voceRecebe) + '</td>' +
         '<td class="num">' + difHtml + '<div class="muted">por venda</div></td>' +
         '<td>' + (l.situacao === 'proposta' && PROMO_ADERIVEL.test(l.tipo)
           ? '<button class="secondary" onclick="abrirAdesao(\'' + esc(l.itemId) + '\',\'' + esc(l.promocaoId || '') + '\',\'' + esc(l.tipo) + '\')">Participar</button>'
@@ -762,7 +762,7 @@ function renderPromocoes() {
     '<div class="insight" style="margin-bottom:12px"><div>' +
       '<b>' + propostas.length + '</b> proposta(s) em <b>' + new Set(propostas.map(l => l.itemId)).size + '</b> anúncio(s) · ' +
       '<b>' + propostas.filter(ehRelampago).length + '</b> relâmpago · <b>' + propostas.filter(l => l.mlBanca > 0).length + '</b> com parte bancada pelo ML.' +
-      '<br><span class="muted">"Você recebe": preço + parte do ML − tarifa − frete grátis, os dois pelo cálculo do ML naquele preço (sem frete grátis, usa o frete médio de 30 dias). A parte do ML vem da API e pode diferir alguns reais da tela. ' +
+      '<br><span class="muted">"Você recebe": preço + parte do ML − tarifa − frete grátis, os dois pelo cálculo do ML naquele preço (sem frete grátis, usa o frete médio de 30 dias). Tarifa e frete batem com a tela do ML. A parte que o ML banca (marcada com ~) pode diferir alguns centavos: a API só informa o percentual com uma casa decimal. ' +
       'Diferença comparada ao preço de hoje. "Participar" mostra a simulação e só adere depois da sua confirmação. Atualizado em ' + fmtHora(promocoes.atualizadoEm) +
       (promocoes.avisoDaApi ? ' · ' + esc(promocoes.avisoDaApi) : '') + '</span>' +
     '</div></div>' +
