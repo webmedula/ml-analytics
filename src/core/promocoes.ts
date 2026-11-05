@@ -159,13 +159,16 @@ export function normalizarPromocao(
   const promocaoId = raw?.id ? String(raw.id) : raw?.promotion_id ? String(raw.promotion_id) : null;
   const candidato = situacaoDoStatus(status) === 'proposta';
   const ofertaId = raw?.offer_id ?? raw?.ref_id ?? null;
-  // A tela do ML, para candidatas de campanha/relampago/oferta do dia, sugere um preco perto do de
-  // hoje (MLB3752079801: R$ 1.739,99 com o anuncio a R$ 1.733), nao o suggested_discounted_price
-  // da API (R$ 2.522,13). Esse numero da tela nao vem na API; o mais proximo e nao propor acima do
-  // preco de hoje, porque o ML aplica o menor preco e a adesao nao mudaria nada.
+  // Preco que a TELA do ML propoe para candidatas (o suggested_discounted_price da API ela ignora):
+  // - campanha/relampago/oferta do dia: o teto da faixa, sem passar do preco de hoje
+  //   (MLB5332741758: teto 242,49, hoje 172,69 -> tela 172,69; MLB3827163247: teto 203,69 -> tela
+  //   203,69, enquanto o suggested era 173,69). O ML aplica o menor preco, entao acima de hoje nao muda nada.
+  // - campanha propria (SELLER_CAMPAIGN): o teto da faixa, que e o % da campanha (MLB3827163247:
+  //   OUTUBRO 2026 a 284,99 = 5% do cheio; o suggested era 209,99).
   let precoProposto = candidato
-    ? positivo(raw?.suggested_discounted_price, raw?.max_discounted_price, raw?.price)
+    ? positivo(raw?.max_discounted_price, raw?.suggested_discounted_price, raw?.price)
     : positivo(raw?.price, raw?.deal_price, raw?.suggested_discounted_price);
+  if (candidato && tipo === 'PRICE_DISCOUNT') precoProposto = positivo(raw?.suggested_discounted_price, raw?.max_discounted_price);
   const minimo = positivo(raw?.min_discounted_price);
   if (candidato && CANDIDATA_DO_ML.has(tipo) && precoProposto != null && precoDeVendaHoje != null && precoDeVendaHoje < precoProposto) {
     precoProposto = minimo != null ? Math.max(minimo, precoDeVendaHoje) : precoDeVendaHoje;
@@ -301,6 +304,16 @@ export function montarLinha(
     precoCheio: num(item.price),
     vistaPrimeiroEm,
   };
+}
+
+/**
+ * A tela do ML mostra UMA "Oferta relampago" por anuncio: quando ha a co-participada (SMART_LIGHTNING,
+ * com parte bancada pelo ML) como proposta, a relampago comum (LIGHTNING) candidata nao aparece.
+ * Conferido em 2026-11-05 no MLB3827163247: a API traz as duas candidatas, a tela so a co-participada.
+ */
+export function semRelampagoDuplicada(linhas: LinhaPromocao[]): LinhaPromocao[] {
+  const comCoParticipada = new Set(linhas.filter((l) => l.tipo === 'SMART_LIGHTNING' && l.situacao === 'proposta').map((l) => l.itemId));
+  return linhas.filter((l) => !(l.tipo === 'LIGHTNING' && l.situacao === 'proposta' && comCoParticipada.has(l.itemId)));
 }
 
 /** Propostas abertas primeiro; dentro delas, as que menos tiram de cada venda. */
@@ -465,7 +478,7 @@ async function doScan(): Promise<PromocoesResult> {
     anunciosAnalisados: attrs.length,
     anunciosComErro: erros,
     truncado: ids.length >= max,
-    itens: ordenarLinhas(itens),
+    itens: ordenarLinhas(semRelampagoDuplicada(itens)),
     vistas,
   };
   persist(result);

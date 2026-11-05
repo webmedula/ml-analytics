@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
-import { getItemPromotionsRaw, getSalePriceRaw, getSellerPromotionsRaw, sondarCustosDaVenda } from '../ml/mlClient';
+import { getItemPromotionsRaw, getSalePriceRaw, getSellerPromotionsRaw, sondarCustosDaVenda, sondarDetalheDaOferta } from '../ml/mlClient';
 import { getPromocoes, refreshPromocoes } from '../core/promocoes';
 import { logger } from '../logger';
 import { config } from '../config';
@@ -47,7 +47,18 @@ export async function promocoesRoutes(app: FastifyInstance): Promise<void> {
     // v39: tarifa e frete gratis no preco de hoje e no cheio, pra conferir o "voce recebe" com a tela do ML.
     const precos = [preco.status === 'fulfilled' ? Number(preco.value?.amount) : NaN, preco.status === 'fulfilled' ? Number(preco.value?.regular_amount) : NaN].filter((n) => Number.isFinite(n) && n > 0);
     const custos = await sondarCustosDaVenda(itemId, [...new Set(precos)]).catch((e: any) => ({ erro: e?.message || String(e) }));
-    return { itemId, precoDeVenda: lado(preco), custosDaVenda: custos, promocoesDoAnuncio: lado(item), campanhasDoVendedor: lado(vendedor) };
+    // v42: detalhe de cada oferta/candidata, pra procurar a parte do ML em reais (meli_percentage vem
+    // arredondado em 1 casa e a tela mostra centavos diferentes).
+    const detalheDasOfertas: Record<string, any> = {};
+    if (item.status === 'fulfilled') {
+      for (const p of item.value.slice(0, 8)) {
+        const ref = p?.ref_id ?? p?.offer_id;
+        if (!ref) continue;
+        const rota = String(ref).startsWith('CANDIDATE-') ? 'candidates' : 'offers';
+        detalheDasOfertas[ref] = await sondarDetalheDaOferta(rota, ref);
+      }
+    }
+    return { itemId, precoDeVenda: lado(preco), custosDaVenda: custos, detalheDasOfertas, promocoesDoAnuncio: lado(item), campanhasDoVendedor: lado(vendedor) };
   });
 
   // ---------------------------------------------------------------- adesao (v39)

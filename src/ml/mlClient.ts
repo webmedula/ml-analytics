@@ -906,6 +906,11 @@ export async function getFreteGratis(
   return Number.isFinite(custo) ? custo : null;
 }
 
+/** v42, DIAGNOSTICO: detalhe de uma candidata/oferta em /seller-promotions/{candidates|offers}/{id}. */
+export async function sondarDetalheDaOferta(rota: 'candidates' | 'offers', id: string): Promise<any> {
+  return mlRequest<any>(`/seller-promotions/${rota}/${encodeURIComponent(id)}?app_version=v2`).catch((e: any) => ({ erro: e?.message || String(e), status: e?.status ?? null }));
+}
+
 /** Dados basicos do anuncio pra simulacao (titulo, preco cheio, status). */
 export async function getItemBasico(itemId: string): Promise<{ id: string; title?: string; price?: number; status?: string }> {
   return mlRequest<any>(`/items/${encodeURIComponent(itemId)}?attributes=id,title,price,status`);
