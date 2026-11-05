@@ -59,6 +59,7 @@ export function filtrarPromocoes(f: FiltroPromocoes, r: PromocoesResult | null =
 
   const itens = r.itens.filter(
     (l) =>
+      (situacao === 'todas' || !l.semEfeito) &&
       (situacao === 'todas' || (situacao === 'participando' ? participa(l.situacao) : l.situacao === situacao)) &&
       (!f.apenas_novas || Date.parse(l.vistaPrimeiroEm) >= desde) &&
       (!tipo || l.tipo === tipo) &&
@@ -79,7 +80,7 @@ export function filtrarPromocoes(f: FiltroPromocoes, r: PromocoesResult | null =
     anunciosComProposta: new Set(itens.map((l) => l.itemId)).size,
     porTipo,
     observacao:
-      'voceRecebe = preco + parte do ML - tarifa - frete gratis (os dois pelo calculo do ML; sem frete gratis, frete medio de 30 dias). Ordenado pelas que menos ' +
+      'Comparado com o que ja recebe hoje (inclui a parte do ML na promocao ativa); propostas acima do preco de hoje ficam de fora (o ML aplica o menor preco). voceRecebe = preco + parte do ML - tarifa - frete gratis (os dois pelo calculo do ML; sem frete gratis, frete medio de 30 dias). Ordenado pelas que menos ' +
       'tiram de cada venda. Aderir continua sendo pela tela do ML.',
     itens: mostrados.map((l) => ({
       itemId: l.itemId, titulo: l.titulo, tipo: l.tipo, rotulo: l.rotulo, nome: l.nome, situacao: l.situacao,

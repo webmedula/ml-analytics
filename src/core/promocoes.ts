@@ -252,6 +252,12 @@ export interface LinhaPromocao extends PromocaoNormalizada, ContaDaVenda {
   descontoPercentual: number | null;
   /** quando ESTE sistema viu a proposta pela primeira vez — e o que define "nova" */
   vistaPrimeiroEm: string;
+  /**
+   * v44: proposta com preco ACIMA do que o comprador paga hoje. O ML aplica o menor preco entre as
+   * promocoes, entao aderir nao muda nada enquanto a atual valer (ex.: OUTUBRO 2026 a 2.754,05 com
+   * a Meli Essencial a 1.733 no MLB3752079801). Nao entra na conta de ganho.
+   */
+  semEfeito?: boolean;
 }
 
 export interface PromocoesResult {
@@ -314,6 +320,22 @@ export function montarLinha(
 export function semRelampagoDuplicada(linhas: LinhaPromocao[]): LinhaPromocao[] {
   const comCoParticipada = new Set(linhas.filter((l) => l.tipo === 'SMART_LIGHTNING' && l.situacao === 'proposta').map((l) => l.itemId));
   return linhas.filter((l) => !(l.tipo === 'LIGHTNING' && l.situacao === 'proposta' && comCoParticipada.has(l.itemId)));
+}
+
+/**
+ * v44: compara cada proposta com o que o vendedor JA recebe hoje, incluindo a parte que o ML banca
+ * na promocao ativa (antes o "hoje" era so preco - tarifa - frete, e a propria ativa aparecia com
+ * ganho igual a parte do ML). Proposta acima do preco de hoje fica `semEfeito` (o ML aplica o menor).
+ */
+export function compararComOQueJaParticipa(linhas: LinhaPromocao[]): LinhaPromocao[] {
+  const base = new Map<string, number>();
+  for (const l of linhas) if (l.situacao === 'ativa' && l.voceRecebe != null) base.set(l.itemId, l.voceRecebe);
+  return linhas.map((l) => {
+    const hoje = base.get(l.itemId) ?? l.voceRecebeHoje;
+    const semEfeito = l.situacao === 'proposta' && l.precoProposto != null && l.precoAtual != null && l.precoProposto > l.precoAtual + 0.005;
+    const dif = semEfeito || l.voceRecebe == null || hoje == null ? null : Math.round((l.voceRecebe - hoje) * 100) / 100;
+    return { ...l, voceRecebeHoje: hoje, diferencaPorVenda: l.situacao === 'ativa' ? 0 : dif, semEfeito };
+  });
 }
 
 /** Propostas abertas primeiro; dentro delas, as que menos tiram de cada venda. */
@@ -478,7 +500,7 @@ async function doScan(): Promise<PromocoesResult> {
     anunciosAnalisados: attrs.length,
     anunciosComErro: erros,
     truncado: ids.length >= max,
-    itens: ordenarLinhas(semRelampagoDuplicada(itens)),
+    itens: ordenarLinhas(compararComOQueJaParticipa(semRelampagoDuplicada(itens))),
     vistas,
   };
   persist(result);

@@ -659,7 +659,7 @@ async function carregarSerie(itemId) {
 // --- aba PROMOÇÕES ---
 // Mostra o que o ML propõe e quanto sobra por venda. "Participar" simula e adere aqui mesmo (v39).
 let promocoes = null;
-let promoFiltro = 'todas';
+let promoFiltro = 'mlbanca'; // v44: o que interessa primeiro é onde o ML banca parte
 let promoBusca = '';
 const ehRelampago = l => /LIGHTNING|DOD/.test(l.tipo);
 // Tipos que a adesao sabe montar (src/core/promocoesAdesao.ts).
@@ -714,7 +714,11 @@ function renderPromocoes() {
   if (promoFiltro === 'ativa' || promoFiltro === 'programada') lista = todas.filter(l => l.situacao === promoFiltro);
   if (promoFiltro === 'propostas') lista = propostas;
   if (promoFiltro === 'relampago') lista = lista.filter(ehRelampago);
-  if (promoFiltro === 'mlbanca') lista = lista.filter(l => l.mlBanca > 0);
+  if (promoFiltro === 'mlbanca') {
+    // Mostra também a promoção ativa do anúncio, para comparar com o que você já recebe.
+    const comMl = new Set(lista.filter(l => l.mlBanca > 0).map(l => l.itemId));
+    lista = lista.filter(l => l.mlBanca > 0 || (l.situacao === 'ativa' && comMl.has(l.itemId)));
+  }
   if (promoFiltro === 'novas') lista = propostas.filter(ehNovo);
   if (q) lista = lista.filter(l => l.itemId.toUpperCase().includes(q) || (l.titulo || '').toUpperCase().includes(q));
 
@@ -742,14 +746,14 @@ function renderPromocoes() {
       const periodo = [fmtData(l.inicio), fmtData(l.fim)].filter(Boolean).join(' a ');
       const faixa = l.precoMinimo || l.precoMaximo ? '<div class="muted">aceita ' + fmtMoney(l.precoMinimo) + ' a ' + fmtMoney(l.precoMaximo) + '</div>' : '';
       const dif = l.diferencaPorVenda;
-      const difHtml = dif == null ? '—' : '<b class="' + (dif >= 0 ? 'delta-up' : 'delta-down') + '">' + (dif >= 0 ? '+' : '−') + fmtMoney(Math.abs(dif)) + '</b>';
+      const difHtml = l.semEfeito ? '<span class="muted">não muda</span>' : dif == null ? '—' : '<b class="' + (dif >= 0 ? 'delta-up' : 'delta-down') + '">' + (dif >= 0 ? '+' : '−') + fmtMoney(Math.abs(dif)) + '</b>';
       return '<tr class="promo-row">' +
         '<td>' + esc(l.rotulo) + (l.nome && l.nome !== l.rotulo ? '<div class="muted">' + esc(l.nome) + '</div>' : '') + '<div style="margin-top:4px">' + tags + '</div></td>' +
         '<td class="muted">' + (periodo || '—') + (l.prazoParaAderir ? '<div>aderir até ' + fmtData(l.prazoParaAderir) + '</div>' : '') + '</td>' +
         '<td class="num">' + fmtMoney(l.precoProposto) + (l.descontoPercentual != null ? '<div class="muted">−' + String(l.descontoPercentual).replace('.', ',') + '% do cheio</div>' : '') + faixa + '</td>' +
         '<td class="num">' + (l.mlBanca > 0 ? '~' + fmtMoney(l.mlBanca) : '—') + '</td>' +
         '<td class="num">' + (l.mlBanca > 0 && l.voceRecebe != null ? '~' : '') + fmtMoney(l.voceRecebe) + '</td>' +
-        '<td class="num">' + difHtml + '<div class="muted">por venda</div></td>' +
+        '<td class="num">' + difHtml + '<div class="muted">' + (l.semEfeito ? 'preço acima do atual' : 'por venda') + '</div></td>' +
         '<td>' + (l.situacao === 'proposta' && PROMO_ADERIVEL.test(l.tipo)
           ? '<button class="secondary" onclick="abrirAdesao(\'' + esc(l.itemId) + '\',\'' + esc(l.promocaoId || '') + '\',\'' + esc(l.tipo) + '\')">Participar</button>'
           : '') + '</td>' +
@@ -763,7 +767,7 @@ function renderPromocoes() {
       '<b>' + propostas.length + '</b> proposta(s) em <b>' + new Set(propostas.map(l => l.itemId)).size + '</b> anúncio(s) · ' +
       '<b>' + propostas.filter(ehRelampago).length + '</b> relâmpago · <b>' + propostas.filter(l => l.mlBanca > 0).length + '</b> com parte bancada pelo ML.' +
       '<br><span class="muted">"Você recebe": preço + parte do ML − tarifa − frete grátis, os dois pelo cálculo do ML naquele preço (sem frete grátis, usa o frete médio de 30 dias). Tarifa e frete batem com a tela do ML. A parte que o ML banca (marcada com ~) pode diferir alguns centavos: a API só informa o percentual com uma casa decimal. ' +
-      'Diferença comparada ao preço de hoje. "Participar" mostra a simulação e só adere depois da sua confirmação. Atualizado em ' + fmtHora(promocoes.atualizadoEm) +
+      '"vs. hoje" compara com o que você já recebe hoje, incluindo a parte do ML na promoção ativa. Proposta com preço acima do atual "não muda": o ML aplica o menor preço. "Participar" mostra a simulação e só adere depois da sua confirmação. Atualizado em ' + fmtHora(promocoes.atualizadoEm) +
       (promocoes.avisoDaApi ? ' · ' + esc(promocoes.avisoDaApi) : '') + '</span>' +
     '</div></div>' +
     '<div class="row" style="margin-bottom:4px">' + filtros.map(([k, t, n]) =>
