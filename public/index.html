@@ -106,6 +106,7 @@
     <button class="tab" data-aba="desempenho" onclick="setAba('desempenho')">Desempenho</button>
     <button class="tab" data-aba="reposicao" onclick="setAba('reposicao')">Reposição</button>
     <button class="tab" data-aba="promocoes" onclick="setAba('promocoes')">Promoções</button>
+    <button class="tab" data-aba="acompanhamento" onclick="setAba('acompanhamento')">Acompanhamento</button>
   </div>
 
   <section class="panel" id="keyPanel" style="display:none">
@@ -162,8 +163,16 @@
       <h2 style="margin:0">Propostas de promoção do Mercado Livre</h2>
       <div class="row" id="promocoesControls"></div>
     </div>
-    <div id="acompBody"></div>
+    <div id="acompResumo"></div>
     <div id="promocoesBody"></div>
+  </section>
+
+  <section class="panel aba-acompanhamento" style="display:none">
+    <div class="detail-head">
+      <h2 style="margin:0">Acompanhamento de promoções</h2>
+      <div class="row" id="acompControls"></div>
+    </div>
+    <div id="acompBody"></div>
   </section>
 </main>
 
@@ -214,9 +223,11 @@ function setAba(nova) {
   document.querySelector('.aba-desempenho').style.display = nova === 'desempenho' ? '' : 'none';
   document.querySelector('.aba-reposicao').style.display = nova === 'reposicao' ? '' : 'none';
   document.querySelector('.aba-promocoes').style.display = nova === 'promocoes' ? '' : 'none';
+  document.querySelector('.aba-acompanhamento').style.display = nova === 'acompanhamento' ? '' : 'none';
   if (nova === 'desempenho') renderDesempenho();
   if (nova === 'reposicao') renderReposicao();
   if (nova === 'promocoes') carregarPromocoes();
+  if (nova === 'acompanhamento') carregarAcompanhamento();
 }
 
 /** Variação percentual, com o mesmo cuidado do backend: sair do zero não vira "+infinito%". */
@@ -681,58 +692,121 @@ async function carregarPromocoes(forcar) {
   carregarAcompanhamento();
 }
 
-// v46: bloco "Vencendo / sem promoção" (lê o histórico de fotos; não chama o ML).
+// v47: aba "Acompanhamento" (lê o histórico de fotos e o cache atual; não chama o ML).
 let acomp = null;
+let acompBusca = '';
 const fmtBRT = iso => {
   const t = Date.parse(iso || '');
   if (isNaN(t)) return '';
   const d = new Date(t - 3 * 3600 * 1000), p = n => String(n).padStart(2, '0');
   return p(d.getUTCDate()) + '/' + p(d.getUTCMonth() + 1) + ' ' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
 };
+const fmtDiaBRT = iso => fmtBRT(iso).slice(0, 5);
 
 async function carregarAcompanhamento() {
-  const el = document.getElementById('acompBody');
-  try { acomp = await api('/api/promocoes/acompanhamento'); } catch (e) { acomp = null; el.innerHTML = '<div class="insight">Não consegui ler o acompanhamento: ' + esc(e.message) + '</div>'; return; }
+  try { acomp = await api('/api/promocoes/acompanhamento'); }
+  catch (e) {
+    acomp = null;
+    const el = document.getElementById('acompBody');
+    if (el) el.innerHTML = '<div class="insight">Não consegui ler o acompanhamento: ' + esc(e.message) + '</div>';
+    renderAcompResumo();
+    return;
+  }
+  renderAcompResumo();
   renderAcompanhamento();
+}
+
+// Uma linha na aba Promoções, com link para a aba nova. Some quando está tudo zerado.
+function renderAcompResumo() {
+  const el = document.getElementById('acompResumo');
+  if (!el) return;
+  if (!acomp) { el.innerHTML = ''; return; }
+  if (!acomp.historicoDisponivel) { el.innerHTML = '<div class="muted" style="margin-bottom:8px">Acompanhamento: histórico indisponível.</div>'; return; }
+  const gr = (acomp.grupos || []).filter(g => !g.todosCobertos);
+  const anuncios = gr.reduce((t, g) => t + g.total, 0);
+  const sem = (acomp.ficouSemPromocao || []).length;
+  const prazos = (acomp.prazoAderir || []).length;
+  if (!gr.length && !sem && !prazos) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="insight" style="margin-bottom:10px"><div>⏳ <b>' + gr.length + '</b> campanha' + (gr.length === 1 ? '' : 's') + ' vencendo (' + anuncios + ' anúncio' + (anuncios === 1 ? '' : 's') + ') · <b>' + sem + '</b> sem promoção · <b>' + prazos + '</b> prazo' + (prazos === 1 ? '' : 's') + ' para aderir → <a href="#" onclick="setAba(\'acompanhamento\'); return false">ver acompanhamento</a></div></div>';
 }
 
 function renderAcompanhamento() {
   const el = document.getElementById('acompBody');
-  if (!el || !acomp) return;
-  if (!acomp.historicoDisponivel) { el.innerHTML = '<div class="insight"><b>Vencendo / sem promoção:</b> histórico indisponível (banco local fora do ar).</div>'; return; }
-  if (!acomp.atualizadoEm) { el.innerHTML = '<div class="insight"><b>Vencendo / sem promoção:</b> aguardando a primeira varredura gravar o histórico.</div>'; return; }
+  const ctl = document.getElementById('acompControls');
+  if (!el || !ctl) return;
+  if (!ctl.firstChild) {
+    ctl.innerHTML = '<input class="mini" style="width:200px" placeholder="buscar anúncio ou MLB" oninput="acompBusca=this.value; renderAcompanhamento()" />' +
+      '<button class="secondary" onclick="carregarAcompanhamento()">Atualizar</button>';
+  }
+  if (!acomp) { el.innerHTML = '<div class="muted" style="padding:16px 0;text-align:center">carregando...</div>'; return; }
+  if (!acomp.historicoDisponivel) { el.innerHTML = '<div class="insight">Histórico indisponível (banco local fora do ar).</div>'; return; }
+  if (!acomp.atualizadoEm) { el.innerHTML = '<div class="insight">Aguardando a primeira varredura gravar o histórico.</div>'; return; }
+
+  const q = acompBusca.trim().toUpperCase();
+  const casa = o => !q || o.itemId.toUpperCase().includes(q) || (o.titulo || '').toUpperCase().includes(q);
+  const open = q ? ' open' : '';
   const link = o => o.permalink ? '<a href="' + esc(o.permalink) + '" target="_blank" rel="noopener">' + esc(o.titulo || o.itemId) + '</a>' : esc(o.titulo || o.itemId);
-  const promo = o => o.promocao ? esc(o.promocao.nome || o.promocao.tipo) : '—';
-  const botoes = o => (o.propostas || []).filter(p => PROMO_ADERIVEL.test(p.tipo)).map(p =>
-    '<div style="margin-top:4px"><button class="secondary" onclick="abrirAdesao(\'' + esc(o.itemId) + '\',\'' + esc(p.promocaoId || '') + '\',\'' + esc(p.tipo) + '\')">Participar</button> ' +
-    '<span class="muted">' + esc(p.nome || p.tipo) + (p.precoProposto != null ? ' · ' + fmtMoney(p.precoProposto) : '') + (p.prazoParaAderir ? ' · aderir até ' + fmtBRT(p.prazoParaAderir) : '') + '</span></div>').join('');
-  const propsTxt = o => o.propostasAbertas ? o.propostasAbertas + ' proposta(s) aberta(s)' : 'nenhuma proposta aberta';
-  const secao = (titulo, lista, cab, linha, vazio) =>
-    '<h3 style="margin:14px 0 6px">' + titulo + ' <span class="muted">(' + lista.length + ')</span></h3>' +
-    (lista.length ? '<div class="table-scroll"><table><thead><tr>' + cab + '</tr></thead><tbody>' + lista.map(linha).join('') + '</tbody></table></div>'
-      : '<div class="muted">' + vazio + '</div>');
-  const termina = secao('⏳ Termina em até ' + acomp.diasAviso + ' dia(s)', acomp.terminaEmBreve,
-    '<th>Anúncio</th><th>Promoção</th><th>Fim (Brasília)</th><th>Propostas para substituir</th>',
-    o => '<tr' + (o.coberta ? ' style="color:#888"' : '') + '><td>' + link(o) + '<div class="muted">' + o.itemId + '</div></td>' +
-      '<td>' + promo(o) + '</td>' +
-      '<td><b>' + esc(o.prazo) + '</b><div class="muted">' + fmtBRT(o.fim) + '</div></td>' +
-      '<td>' + (o.coberta ? '<span class="muted">coberta: programada começa ' + fmtBRT(o.programadaInicio) + '</span>'
-        : (o.folga ? '<div class="muted">programada começa ' + fmtBRT(o.programadaInicio) + ': folga de ' + esc(o.folga) + ' (não cobre)</div>' : '') + propsTxt(o) + botoes(o)) + '</td></tr>',
-    'Nenhuma promoção termina nesse prazo.');
-  const sem = secao('🚫 Ficou sem promoção', acomp.ficouSemPromocao,
-    '<th>Anúncio</th><th>Última promoção</th><th>Sem promoção desde</th><th>Propostas abertas</th>',
-    o => '<tr><td>' + link(o) + '<div class="muted">' + o.itemId + '</div></td><td>' + promo(o) + '</td><td>' + fmtBRT(o.desde) + '</td><td>' + propsTxt(o) + botoes(o) + '</td></tr>',
-    'Nenhum anúncio ficou sem promoção.');
-  const semData = secao('❔ Sem data informada', acomp.semDataDeFim,
-    '<th>Anúncio</th><th>Promoção ativa</th><th>Fim</th>',
-    o => '<tr><td>' + link(o) + '<div class="muted">' + o.itemId + '</div></td><td>' + promo(o) + '</td><td class="muted">sem data informada</td></tr>',
-    'Toda promoção ativa informa a data de fim.');
-  const cobertas = acomp.terminaEmBreve.filter(o => o.coberta).length;
-  el.innerHTML = '<div class="insight" style="margin-bottom:12px"><div><b>Vencendo / sem promoção</b> · ' +
-    '<b>' + (acomp.terminaEmBreve.length - cobertas) + '</b> vencendo' + (cobertas ? ' (+' + cobertas + ' cobertas)' : '') +
-    ' · <b>' + acomp.ficouSemPromocao.length + '</b> sem promoção · <b>' + acomp.semDataDeFim.length + '</b> sem data de fim' +
-    '<br><span class="muted">Histórico de varreduras, horário de Brasília. Não chama o ML e não renova nada. Atualizado em ' + fmtBRT(acomp.atualizadoEm) + '.</span></div></div>' +
-    termina + sem + semData + '<hr style="margin:18px 0;border:0;border-top:1px solid #ddd">';
+  const anun = o => link(o) + '<div class="muted">' + esc(o.itemId) + '</div>';
+  const botao = (itemId, p) => PROMO_ADERIVEL.test(p.tipo)
+    ? '<button class="secondary" onclick="abrirAdesao(\'' + esc(itemId) + '\',\'' + esc(p.promocaoId || '') + '\',\'' + esc(p.tipo) + '\')">Participar</button> ' : '';
+  const descP = p => '<span class="muted">' + esc(p.nome || p.tipo) + (p.precoProposto != null ? ' · ' + fmtMoney(p.precoProposto) : '') +
+    (p.voceRecebe != null ? ' · você recebe ' + fmtMoney(p.voceRecebe) : '') + (p.prazoParaAderir ? ' · aderir até ' + fmtBRT(p.prazoParaAderir) : '') + '</span>';
+  // Só a melhor substituta, com "+N outras" que expande o resto.
+  const subst = o => {
+    if (!o.substituta) return '<span class="muted">nenhuma proposta aberta</span>';
+    const outras = (o.outras || []).length
+      ? '<details style="margin-top:4px"><summary class="muted" style="cursor:pointer">+' + o.outras.length + ' outra' + (o.outras.length > 1 ? 's' : '') + '</summary>' +
+        o.outras.map(p => '<div style="margin-top:4px">' + botao(o.itemId, p) + descP(p) + '</div>').join('') + '</details>'
+      : '';
+    return '<div>' + botao(o.itemId, o.substituta) + descP(o.substituta) + '</div>' + outras;
+  };
+  const tabela = (cab, linhas) => '<div class="table-scroll"><table><thead><tr>' + cab + '</tr></thead><tbody>' + linhas + '</tbody></table></div>';
+  const titulo = (t, n) => '<h3 style="margin:16px 0 6px">' + t + ' <span class="muted">(' + n + ')</span></h3>';
+
+  // 1. Vence em breve, agrupado por promoção + dia do fim. Recolhido por padrão.
+  const grupos = (acomp.grupos || []).map(g => ({ g, anuncios: g.anuncios.filter(casa) })).filter(x => x.anuncios.length);
+  const secVence = titulo('⏳ Vence em breve', grupos.length) + (grupos.length ? grupos.map(({ g, anuncios }) => {
+    const cinza = g.todosCobertos ? ' style="color:#888"' : '';
+    const quando = g.diasRestantes <= 0 ? 'termina hoje' : g.prazo;
+    return '<details' + open + ' style="margin-bottom:6px"><summary' + cinza + ' style="cursor:pointer"><b>' + esc(g.nome || g.tipo) + '</b> <span class="muted">' + esc(g.rotuloTipo) + '</span> · fim ' + fmtBRT(g.fim) +
+      ' · <b>' + esc(quando) + '</b> · ' + g.total + ' anúncio' + (g.total > 1 ? 's' : '') + (g.cobertos ? ' · ' + g.cobertos + ' coberto' + (g.cobertos > 1 ? 's' : '') : '') + '</summary>' +
+      tabela('<th>Anúncio</th><th>Melhor substituta</th>', anuncios.map(o =>
+        '<tr' + (o.coberta ? ' style="color:#888"' : '') + '><td>' + anun(o) + '</td><td>' +
+        (o.coberta ? '<span class="muted">coberta: há programada que continua depois (começa ' + fmtBRT(o.programadaInicio) + ')</span>'
+          : (o.folga ? '<div class="muted">programada começa ' + fmtBRT(o.programadaInicio) + ': folga de ' + esc(o.folga) + ' (não cobre)</div>' : '') + subst(o)) + '</td></tr>').join('')) +
+      '</details>';
+  }).join('') : '<div class="muted">Nenhuma promoção termina nesse prazo.</div>');
+
+  // 2. Ficou sem promoção, por anúncio.
+  const sem = (acomp.ficouSemPromocao || []).filter(casa);
+  const secSem = titulo('🚫 Ficou sem promoção', sem.length) + (sem.length ? tabela('<th>Anúncio</th><th>Última promoção</th><th>Sem promoção desde</th><th>Melhor proposta aberta</th>',
+    sem.map(o => '<tr><td>' + anun(o) + '</td><td>' + esc(o.promocao ? (o.promocao.nome || o.promocao.tipo) : '—') + '</td><td>' + fmtBRT(o.desde) + '</td><td>' + subst(o) + '</td></tr>').join(''))
+    : '<div class="muted">Nenhum anúncio ficou sem promoção.</div>');
+
+  // 3. Prazo para aderir acabando, uma linha por anúncio + proposta.
+  const prazos = (acomp.prazoAderir || []).filter(casa);
+  const secPrazo = titulo('📅 Prazo para aderir acabando', prazos.length) + (prazos.length ? tabela('<th>Prazo</th><th>Anúncio</th><th>Promoção</th><th class="num">Preço</th><th class="num">ML banca</th><th class="num">vs. hoje</th><th></th>',
+    prazos.map(p => '<tr><td><b>' + esc(p.prazo) + '</b><div class="muted">' + fmtBRT(p.prazoParaAderir) + '</div></td><td>' + anun(p) + '</td>' +
+      '<td>' + esc(p.promocao.nome || p.promocao.rotulo) + '<div class="muted">' + esc(p.promocao.rotulo) + '</div></td>' +
+      '<td class="num">' + fmtMoney(p.precoProposto) + '</td><td class="num">' + (p.mlPercentual > 0 ? '~' + String(p.mlPercentual).replace('.', ',') + '%' : '—') + '</td>' +
+      '<td class="num">' + (p.diferencaPorVenda == null ? '—' : '<b class="' + (p.diferencaPorVenda >= 0 ? 'delta-up' : 'delta-down') + '">' + (p.diferencaPorVenda >= 0 ? '+' : '−') + fmtMoney(Math.abs(p.diferencaPorVenda)) + '</b>') + '</td>' +
+      '<td>' + botao(p.itemId, { tipo: p.promocao.tipo, promocaoId: p.promocao.promocaoId }) + '</td></tr>').join(''))
+    : '<div class="muted">Nenhum prazo de adesão acabando nas propostas interessantes.</div>');
+
+  // 4. Sem data de fim: consulta, recolhido, agrupado por promoção.
+  const sd = (acomp.semDataPorPromocao || []).map(g => ({ g, anuncios: g.anuncios.filter(casa) })).filter(x => x.anuncios.length);
+  const totSd = sd.reduce((t, x) => t + x.anuncios.length, 0);
+  const secSd = '<details' + open + ' style="margin-top:16px"><summary style="cursor:pointer"><b>❔ Sem data de fim</b> <span class="muted">(' + totSd + ' anúncio' + (totSd === 1 ? '' : 's') + ' em ' + sd.length + ' promoç' + (sd.length === 1 ? 'ão' : 'ões') + ' · consulta, não é alerta)</span></summary>' +
+    (sd.length ? sd.map(({ g, anuncios }) => '<details' + open + ' style="margin:6px 0 0 14px"><summary style="cursor:pointer">' + esc(g.nome || g.tipo) + ' <span class="muted">' + esc(g.rotuloTipo) + '</span> · ' + anuncios.length + ' anúncio' + (anuncios.length > 1 ? 's' : '') + '</summary>' +
+      '<div style="margin:4px 0 0 14px">' + anuncios.map(o => '<div>' + link(o) + ' <span class="muted">' + esc(o.itemId) + '</span></div>').join('') + '</div></details>').join('')
+      : '<div class="muted" style="margin-top:6px">Toda promoção ativa informa a data de fim.</div>') + '</details>';
+
+  const abertos = (acomp.grupos || []).filter(g => !g.todosCobertos);
+  el.innerHTML = '<div class="insight" style="margin-bottom:8px"><div>' +
+    '<b>' + abertos.length + '</b> campanha(s) vencendo (' + abertos.reduce((t, g) => t + g.total, 0) + ' anúncios) · <b>' + (acomp.ficouSemPromocao || []).length + '</b> sem promoção · <b>' +
+    (acomp.prazoAderir || []).length + '</b> prazo(s) para aderir · <b>' + (acomp.semDataDeFim || []).length + '</b> sem data de fim' +
+    '<br><span class="muted">Horário de Brasília. Não chama o ML e não renova nada; "Participar" usa a simulação e a confirmação da aba Promoções. Histórico atualizado em ' + fmtBRT(acomp.atualizadoEm) + '.</span></div></div>' +
+    secVence + secSem + secPrazo + secSd;
 }
 
 function setPromoFiltro(f) { promoFiltro = f; renderPromocoes(); }
