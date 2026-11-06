@@ -317,6 +317,17 @@ describe('PRAZO_ADERIR_ACABANDO', () => {
     expect(prazosParaAderir([prop, linha({ situacao: 'programada', promocaoId: 'P1' })], AGORA, 3)).toHaveLength(0);
     expect(prazosParaAderir([prop, linha({ situacao: 'ativa', promocaoId: 'OUTRA' })], AGORA, 3)).toHaveLength(1);
   });
+  it('fica fora com anuncio pausado ou finalizado (status da linha ou, na falta, o da foto); sem status avalia', () => {
+    const prop = l({ mlPercentual: 5 });
+    expect(prazosParaAderir([{ ...prop, statusAnuncio: 'paused' }], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([{ ...prop, statusAnuncio: 'closed' }], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([{ ...prop, statusAnuncio: 'active' }], AGORA, 3)).toHaveLength(1);
+    expect(prazosParaAderir([prop], AGORA, 3)).toHaveLength(1);
+    // cache de versao anterior (sem statusAnuncio): vale o status da foto
+    expect(prazosParaAderir([prop], AGORA, 3, new Map([['MLB1', 'paused']]))).toHaveLength(0);
+    const a = montarAcompanhamento([foto({ statusAnuncio: 'paused' })], new Map(), AGORA, OPTS, { itens: [prop], rotuloDoTipo: rot });
+    expect(a.prazoAderir).toHaveLength(0);
+  });
   it('uma linha por anuncio + proposta, ordenada pelo prazo', () => {
     const r = prazosParaAderir(
       [l({ promocaoId: 'A', mlPercentual: 5, prazoParaAderir: dia(2) }), l({ promocaoId: 'B', mlPercentual: 5, prazoParaAderir: dia(1) }), l({ itemId: 'MLB2', promocaoId: 'A', mlPercentual: 5, prazoParaAderir: dia(1.5) })],
@@ -333,7 +344,7 @@ describe('resumoEmTexto agrupado (v47)', () => {
     expect(resumoEmTexto(montarAcompanhamento([], new Map(), AGORA, OPTS), 10)).toBeNull();
   });
 
-  it('as tres secoes, com titulos do analytics, grupo com cobertos, ate 5 anuncios e +N', () => {
+  it('as tres secoes, com titulos do analytics, e do grupo so a linha (sem sub-linhas de anuncios)', () => {
     const fim = '2026-11-08T23:59:00-03:00';
     const fotos = Array.from({ length: 8 }, (_, i) =>
       foto({
@@ -347,8 +358,9 @@ describe('resumoEmTexto agrupado (v47)', () => {
     const itens = [linha({ itemId: 'MLB50', titulo: 'Prazo', nome: 'Black Friday 2026', promocaoId: 'BF', mlPercentual: 4, diferencaPorVenda: 1.2, prazoParaAderir: dia(2) })];
     const t = resumoEmTexto(montarAcompanhamento(fotos, hist, AGORA, OPTS, { itens, rotuloDoTipo: rot }), 10)!;
     expect(t).toContain('⏳ Vencendo\n• OUTUBRO 2026 (Campanha propria) termina dom 08/11: 8 anúncios, 2 já cobertos');
-    expect(t.match(/ {2}– MLB/g)).toHaveLength(5);
-    expect(t).toContain('  +1');
+    expect(t).not.toContain('– MLB');
+    expect(t).not.toMatch(/^ {2}\+\d/m);
+    expect(t.split('\n').filter((x) => x.startsWith('• OUTUBRO'))).toHaveLength(1);
     expect(t).toContain('🚫 Ficou sem promoção\n• MLB90 Sem promo — desde 05/11');
     expect(t).toContain('📅 Prazo para aderir acabando\n• Black Friday 2026 · MLB50 Prazo — fecha sáb 07/11 · você recebe +R$ 1,20');
   });

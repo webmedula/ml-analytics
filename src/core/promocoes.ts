@@ -253,6 +253,8 @@ export interface LinhaPromocao extends PromocaoNormalizada, ContaDaVenda {
   precoAtual: number | null;
   precoCheio: number | null;
   descontoPercentual: number | null;
+  /** v47: status do anuncio no ML (active, paused, closed...). Ausente em cache de versao anterior. */
+  statusAnuncio?: string | null;
   /** quando ESTE sistema viu a proposta pela primeira vez — e o que define "nova" */
   vistaPrimeiroEm: string;
   /**
@@ -282,7 +284,7 @@ export function chaveDaPromocao(itemId: string, p: Pick<PromocaoNormalizada, 'ti
 
 /** Monta a linha final de uma promocao. PURA: recebe as tarifas ja buscadas. */
 export function montarLinha(
-  item: Pick<MlItemAttributes, 'id' | 'title' | 'permalink' | 'price'>,
+  item: Pick<MlItemAttributes, 'id' | 'title' | 'permalink' | 'price' | 'status'>,
   promo: PromocaoNormalizada,
   tarifas: { atual: number | null; proposta: number | null },
   fretePorUnidade: number | null | { media: number | null; atual: number | null; proposta: number | null },
@@ -311,6 +313,7 @@ export function montarLinha(
     precoAtual,
     descontoPercentual: base && promo.precoProposto ? r2((1 - promo.precoProposto / base) * 100) : null,
     precoCheio: num(item.price),
+    statusAnuncio: item.status ?? null,
     vistaPrimeiroEm,
   };
 }

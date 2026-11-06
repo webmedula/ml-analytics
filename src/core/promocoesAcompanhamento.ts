@@ -526,15 +526,25 @@ const idDaPromocao = (l: Pick<LinhaPromocao, 'tipo' | 'promocaoId' | 'ofertaId'>
 /**
  * PRAZO_ADERIR_ACABANDO: proposta ABERTA cujo prazo para aderir acaba em ate `diasAviso` dias (e ainda
  * nao passou), so as interessantes (ML banca parte, ou "vs. hoje" >= 0), nunca `semEfeito`, e fora se
- * o anuncio ja participa DESSA promocao (ativa ou programada). Sem prazo informado nao entra.
+ * o anuncio ja participa DESSA promocao (ativa ou programada). Sem prazo informado nao entra, nem
+ * anuncio pausado/finalizado.
  * Uma linha por anuncio + proposta, ordenada pelo prazo. Vem do cache atual: funciona desde o deploy.
  */
-export function prazosParaAderir(itens: LinhaPromocao[], agora: number, diasAviso: number): PrazoAderir[] {
+export function prazosParaAderir(
+  itens: LinhaPromocao[],
+  agora: number,
+  diasAviso: number,
+  /** status das fotos, para cache de versao anterior que ainda nao traz `statusAnuncio` */
+  statusPorItem: Map<string, string | null> = new Map(),
+): PrazoAderir[] {
   const participa = new Set<string>();
   for (const l of itens) if (l.situacao === 'ativa' || l.situacao === 'programada') participa.add(`${l.itemId}#${idDaPromocao(l)}`);
   const out: PrazoAderir[] = [];
   for (const l of itens) {
     if (l.situacao !== 'proposta' || l.semEfeito) continue;
+    // Pausado ou finalizado nao entra (mesma regra do "ficou sem promocao"); sem status, avalia.
+    const status = l.statusAnuncio ?? statusPorItem.get(l.itemId) ?? null;
+    if (status && status !== 'active') continue;
     const prazoIso = paraIso(l.prazoParaAderir);
     if (!prazoIso) continue;
     const prazoMs = Date.parse(prazoIso);
@@ -570,8 +580,11 @@ export interface Acompanhamento {
   terminaEmBreve: Ocorrencia[];
   ficouSemPromocao: Ocorrencia[];
   semDataDeFim: Ocorrencia[];
+  /** false = banco fora do ar: so as secoes que dependem dele ficam vazias */
   historicoDisponivel: boolean;
   // v47
+  /** "prazo para aderir" vem do cache de promocoes, nao do banco: false so quando nao ha cache usavel */
+  prazoDisponivel: boolean;
   grupos: GrupoVencendo[];
   prazoAderir: PrazoAderir[];
   semDataPorPromocao: GrupoSemData[];
@@ -591,6 +604,7 @@ export function acompanhamentoVazio(diasAviso: number, historicoDisponivel: bool
     ficouSemPromocao: [],
     semDataDeFim: [],
     historicoDisponivel,
+    prazoDisponivel: false,
     grupos: [],
     prazoAderir: [],
     semDataPorPromocao: [],
@@ -628,24 +642,21 @@ export function montarAcompanhamento(
     ficouSemPromocao: sem,
     semDataDeFim: semData,
     historicoDisponivel: true,
+    prazoDisponivel: !!ctx.itens,
     grupos: agruparVencendo(termina, rotulo),
-    prazoAderir: ctx.itens ? prazosParaAderir(ctx.itens, agora, opts.diasAviso) : [],
+    prazoAderir: ctx.itens
+      ? prazosParaAderir(ctx.itens, agora, opts.diasAviso, new Map(atuais.map((f) => [f.itemId, f.statusAnuncio] as const)))
+      : [],
     semDataPorPromocao: agruparSemData(semData, rotulo),
   };
 }
 
 const brl = (v: number): string => `${v < 0 ? '-' : '+'}R$ ${Math.abs(v).toFixed(2).replace('.', ',')}`;
 const curto = (o: { titulo: string | null; itemId: string }, n = 50): string => `${o.itemId} ${(o.titulo ?? '').slice(0, n)}`.trim();
-const MAX_ANUNCIOS_NO_GRUPO = 5;
-
 function linhasDoGrupo(g: GrupoVencendo): string {
   const quando = g.diasRestantes <= 0 ? 'termina hoje' : `termina ${diaSemanaData(g.fim)}`;
   const cob = g.cobertos ? `, ${g.cobertos} já ${g.cobertos > 1 ? 'cobertos' : 'coberto'}` : '';
-  const cab = `• ${g.nome ?? g.tipo} (${g.rotuloTipo}) ${quando}: ${g.total} anúncio${g.total > 1 ? 's' : ''}${cob}`;
-  const abertos = g.anuncios.filter((o) => !o.coberta);
-  const lista = abertos.slice(0, MAX_ANUNCIOS_NO_GRUPO).map((o) => `  – ${curto(o)}`);
-  const resto = abertos.length - lista.length;
-  return [cab, ...lista, ...(resto > 0 ? [`  +${resto}`] : [])].join('\n');
+  return `• ${g.nome ?? g.tipo} (${g.rotuloTipo}) ${quando}: ${g.total} anúncio${g.total > 1 ? 's' : ''}${cob}`;
 }
 
 const linhaSemPromo = (o: Ocorrencia): string => `• ${curto(o)} — desde ${(dataHoraBrasilia(o.desde) || '').slice(0, 5)}`;

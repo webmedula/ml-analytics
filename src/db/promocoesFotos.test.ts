@@ -132,6 +132,36 @@ describe('promocoes_fotos (v46)', () => {
     const a = obterAcompanhamento({ agora: AGORA });
     expect(a.historicoDisponivel).toBe(false);
     expect(a.terminaEmBreve).toEqual([]);
+    // sem banco e sem cache de promocoes: nada a dizer
     expect((promocoesVencendo({}, AGORA) as any).disponivel).toBe(false);
+  });
+
+  it('banco indisponivel nao esconde o prazo para aderir, que vem do cache; so o resto fica sem calcular', async () => {
+    const promo = await import('../core/promocoes');
+    const linha: any = {
+      itemId: 'MLB7', titulo: 'Prazo', permalink: null, tipo: 'DEAL', rotulo: 'Campanha do ML', nome: 'BF', promocaoId: 'BF', ofertaId: null,
+      situacao: 'proposta', semEfeito: false, precoProposto: 80, precoAtual: 100, precoCheio: 120, mlPercentual: 4, voceRecebe: 50,
+      diferencaPorVenda: 1.2, inicio: null, fim: null, prazoParaAderir: h(30), statusAnuncio: 'active',
+    };
+    const cachePath = path.join(tmp, 'promocoes-cache.json');
+    (config as any).promocoesCachePath = cachePath;
+    fs.writeFileSync(cachePath, JSON.stringify({ atualizadoEm: h(0), apiDisponivel: true, avisoDaApi: null, anunciosAnalisados: 1, anunciosComErro: 0, truncado: false, itens: [linha], vistas: {} }));
+    // o cache em memoria do modulo pode ter sido preenchido por outro teste
+    (promo as any).getPromocoes();
+    const arquivo = path.join(tmp, 'arquivo');
+    fs.writeFileSync(arquivo, 'x');
+    (config as any).dataDir = path.join(arquivo, 'sub');
+    fecharBanco();
+    const a = obterAcompanhamento({ agora: AGORA });
+    expect(a.historicoDisponivel).toBe(false);
+    expect(a.prazoDisponivel).toBe(true);
+    expect(a.prazoAderir).toHaveLength(1);
+    expect(a.terminaEmBreve).toEqual([]);
+    const t: any = promocoesVencendo({}, AGORA);
+    expect(t.disponivel).toBe(true);
+    expect(t.historicoDisponivel).toBe(false);
+    expect(t.aviso).toContain('so o prazo para aderir');
+    expect(t.resumoEmTexto).toContain('📅 Prazo para aderir acabando');
+    expect(t.resumoEmTexto).not.toContain('⏳');
   });
 });
