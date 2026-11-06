@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   acompanharPromocoes,
+  agruparSemData,
+  agruparVencendo,
+  avaliarCobertura,
   diasAte,
   FotoPromocao,
   montarAcompanhamento,
   montarFotos,
   paraIso,
+  prazosParaAderir,
+  propostasDoAnuncio,
   resumoEmTexto,
 } from './promocoesAcompanhamento';
 
@@ -17,11 +22,12 @@ const dia = (d: number) => h(d * 24);
 function foto(over: Partial<FotoPromocao> = {}): FotoPromocao {
   return {
     itemId: 'MLB1', tiradaEm: h(0), titulo: 'Lanterna', permalink: 'https://ml/MLB1', statusAnuncio: 'active',
-    precoAtual: 100, precoCheio: 120, ativa: null, programada: null, propostasAbertas: 0, propostas: [],
+    precoAtual: 100, precoCheio: 120, ativa: null, programadas: [], propostasAbertas: 0, propostas: [],
     buybox: null, varreduraOk: true, ...over,
   };
 }
 const ativa = (fim: string | null) => ({ tipo: 'DEAL', id: 'P1', nome: 'Oferta X', fim });
+const prog = (tipo: string, inicio: string | null, fim: string | null, semEfeito = false) => ({ tipo, id: null, inicio, fim, precoProposto: null, semEfeito });
 
 describe('TERMINA_EM_BREVE', () => {
   it('termina em 2 dias avisa; em 5 dias nao', () => {
@@ -49,26 +55,27 @@ describe('TERMINA_EM_BREVE', () => {
     expect(paraIso('lixo')).toBeNull();
   });
 
-  it('programada que comeca ate 2h depois do fim (ou antes) = coberta e fora do texto do Gerente', () => {
-    const f = foto({ ativa: ativa(dia(2)), programada: { tipo: 'LIGHTNING', inicio: new Date(Date.parse(dia(2)) + 3600000).toISOString(), fim: dia(6) } });
+  it('programada que comeca ate 2h depois do fim = coberta e fora do texto do Gerente', () => {
+    const f = foto({ ativa: ativa(dia(2)), programadas: [prog('LIGHTNING', new Date(Date.parse(dia(2)) + 3600000).toISOString(), dia(6))] });
     const o = acompanharPromocoes(f, [], AGORA, OPTS)!;
     expect(o.coberta).toBe(true);
     const a = montarAcompanhamento([f], new Map(), AGORA, OPTS);
     expect(a.terminaEmBreve).toHaveLength(1);
     expect(resumoEmTexto(a, 10)).toBeNull();
-    const antes = foto({ ativa: ativa(dia(2)), programada: { tipo: 'X', inicio: dia(1), fim: dia(6) } });
+    // inicio no passado continua aceito, desde que termine depois da ativa
+    const antes = foto({ ativa: ativa(dia(2)), programadas: [prog('X', dia(-1), dia(6))] });
     expect(acompanharPromocoes(antes, [], AGORA, OPTS)?.coberta).toBe(true);
   });
 
   it('folga maior que 2h nao e coberta e mostra a folga', () => {
-    const f = foto({ ativa: ativa(dia(2)), programada: { tipo: 'X', inicio: new Date(Date.parse(dia(2)) + 3 * 3600000).toISOString(), fim: dia(6) } });
+    const f = foto({ ativa: ativa(dia(2)), programadas: [prog('X', new Date(Date.parse(dia(2)) + 3 * 3600000).toISOString(), dia(6))] });
     const o = acompanharPromocoes(f, [], AGORA, OPTS)!;
     expect(o.coberta).toBe(false);
     expect(o.folgaMinutos).toBe(180);
     expect(o.folga).toBe('3h');
-    const exato = foto({ ativa: ativa(dia(2)), programada: { tipo: 'X', inicio: new Date(Date.parse(dia(2)) + 2 * 3600000).toISOString(), fim: dia(6) } });
+    const exato = foto({ ativa: ativa(dia(2)), programadas: [prog('X', new Date(Date.parse(dia(2)) + 2 * 3600000).toISOString(), dia(6))] });
     expect(acompanharPromocoes(exato, [], AGORA, OPTS)?.coberta).toBe(true);
-    expect(resumoEmTexto(montarAcompanhamento([f], new Map(), AGORA, OPTS), 10)).toContain('folga de 3h');
+    expect(montarAcompanhamento([f], new Map(), AGORA, OPTS).terminaEmBreve[0].folga).toBe('3h');
   });
 });
 
@@ -112,9 +119,9 @@ describe('FICOU_SEM_PROMOCAO', () => {
   });
 
   it('programada tambem conta como "tinha promocao"; atual com programada nao entra', () => {
-    const prog = foto({ tiradaEm: h(-6), programada: { tipo: 'X', inicio: h(5), fim: dia(3) } });
-    expect(acompanharPromocoes(sem(h(0)), [prog], AGORA, OPTS)?.situacao).toBe('FICOU_SEM_PROMOCAO');
-    expect(acompanharPromocoes(foto({ programada: { tipo: 'X', inicio: h(5), fim: dia(3) } }), [comPromo(h(-6))], AGORA, OPTS)).toBeNull();
+    const comProg = foto({ tiradaEm: h(-6), programadas: [prog('X', h(5), dia(3))] });
+    expect(acompanharPromocoes(sem(h(0)), [comProg], AGORA, OPTS)?.situacao).toBe('FICOU_SEM_PROMOCAO');
+    expect(acompanharPromocoes(foto({ programadas: [prog('X', h(5), dia(3))] }), [comPromo(h(-6))], AGORA, OPTS)).toBeNull();
   });
 
   it('anuncio pausado ou finalizado nao entra', () => {
@@ -168,22 +175,217 @@ describe('dado incompleto', () => {
   });
 });
 
-describe('resumoEmTexto', () => {
+
+// ------------------------------------------------------------------ v47
+
+const rot = (t: string) => ({ SELLER_CAMPAIGN: 'Campanha propria', DEAL: 'Campanha do ML' } as Record<string, string>)[t] ?? t;
+
+function linha(over: Record<string, unknown> = {}): any {
+  return {
+    itemId: 'MLB1', titulo: 'Lanterna', permalink: null, tipo: 'DEAL', rotulo: 'Campanha do ML', nome: 'Promo', promocaoId: 'P1', ofertaId: null,
+    situacao: 'proposta', semEfeito: false, precoProposto: 90, precoAtual: 100, precoCheio: 120, mlPercentual: null, voceRecebe: 50,
+    diferencaPorVenda: -5, inicio: null, fim: null, prazoParaAderir: null, ...over,
+  };
+}
+
+describe('coberta (v47): so cobre quem termina depois, comeca ate 2h e tem efeito', () => {
+  const fimAtiva = Date.parse('2026-11-08T23:59:00-03:00');
+  const p = (inicio: string | null, fim: string | null, semEfeito = false) => ({ tipo: 'X', id: null, inicio, fim, precoProposto: null, semEfeito });
+
+  it('programada que comecou 19/10 e termina junto com a ativa NAO cobre', () => {
+    const r = avaliarCobertura(fimAtiva, [p('2026-10-19T00:00:00-03:00', '2026-11-08T23:59:00-03:00')]);
+    expect(r.coberta).toBe(false);
+    // termina ANTES tambem nao cobre
+    expect(avaliarCobertura(fimAtiva, [p('2026-10-19T00:00:00-03:00', '2026-11-05T23:59:00-03:00')]).coberta).toBe(false);
+  });
+
+  it('programada 12/11 a 01/12 com a ativa acabando 12/11 23:59 e inicio 13/11 00:00 cobre (folga de 1 min)', () => {
+    const fim = Date.parse('2026-11-12T23:59:00-03:00');
+    const r = avaliarCobertura(fim, [p('2026-11-13T00:00:00-03:00', '2026-12-01T23:59:00-03:00')]);
+    expect(r.coberta).toBe(true);
+  });
+
+  it('programada semEfeito nao cobre', () => {
+    const fim = Date.parse('2026-11-12T23:59:00-03:00');
+    expect(avaliarCobertura(fim, [p('2026-11-13T00:00:00-03:00', '2026-12-01T23:59:00-03:00', true)]).coberta).toBe(false);
+  });
+
+  it('alguma entre varias cobre; sem fim cobre; folga e a da que termina depois mas comeca tarde', () => {
+    const mist = [p('2026-10-19T00:00:00-03:00', '2026-11-08T23:59:00-03:00'), p('2026-11-09T00:00:00-03:00', null)];
+    expect(avaliarCobertura(fimAtiva, mist).coberta).toBe(true);
+    const tarde = avaliarCobertura(fimAtiva, [p('2026-11-09T05:59:00-03:00', '2026-12-01T00:00:00-03:00')]);
+    expect(tarde.coberta).toBe(false);
+    expect(tarde.folgaMinutos).toBe(360);
+  });
+});
+
+describe('grupos de "vence em breve"', () => {
+  const oc = (i: number, fim: string, nome = 'OUTUBRO 2026', id: string | null = 'C1', coberta = false) =>
+    acompanharPromocoes(
+      foto({ itemId: `MLB${i}`, titulo: `Item ${i}`, ativa: { tipo: 'SELLER_CAMPAIGN', id, nome, fim: paraIso(fim) }, programadas: coberta ? [prog('X', dia(2), dia(9))] : [] }),
+      [], AGORA, OPTS,
+    )!;
+
+  it('19 anuncios com a mesma promocao e o mesmo fim viram 1 grupo com 19', () => {
+    const fim = '2026-11-07T23:59:00-03:00';
+    const ocs = Array.from({ length: 19 }, (_, i) => oc(i + 1, fim));
+    const g = agruparVencendo(ocs, rot);
+    expect(g).toHaveLength(1);
+    expect(g[0].total).toBe(19);
+    expect(g[0].rotuloTipo).toBe('Campanha propria');
+    expect(g[0].prazo).toBe('faltam 2 dias');
+  });
+
+  it('mesma promocao com fins em dias diferentes = grupos separados; horarios do mesmo dia = um grupo', () => {
+    const a = oc(1, '2026-11-07T23:59:00-03:00');
+    const b = oc(2, '2026-11-06T23:59:00-03:00');
+    const c = oc(3, '2026-11-07T10:00:00-03:00');
+    const g = agruparVencendo([a, b, c], rot);
+    expect(g.map((x) => x.total).sort()).toEqual([1, 2]);
+  });
+
+  it('sem id agrupa por tipo + nome; cobertos vao para o fim do grupo e grupo todo coberto vai para o fim da lista', () => {
+    const fim = '2026-11-07T23:59:00-03:00';
+    const todos = [oc(1, fim, 'Cob', null, true), oc(2, fim, 'Cob', null, true)];
+    const mista = [oc(3, fim, 'Aberta', null, true), oc(4, fim, 'Aberta', null, false)];
+    const g = agruparVencendo([...todos, ...mista], rot);
+    expect(g[0].nome).toBe('Aberta');
+    expect(g[0].anuncios.map((o) => o.coberta)).toEqual([false, true]);
+    expect(g[1].nome).toBe('Cob');
+    expect(g[1].todosCobertos).toBe(true);
+  });
+
+  it('sem data agrupado por promocao, com a contagem', () => {
+    const sd = (i: number, nome: string) => acompanharPromocoes(foto({ itemId: `MLB${i}`, ativa: { tipo: 'SMART', id: null, nome, fim: null } }), [], AGORA, OPTS)!;
+    const g = agruparSemData([sd(1, 'Impulsione'), sd(2, 'Impulsione'), sd(3, 'Meli Essencial')], rot);
+    expect(g.map((x) => [x.nome, x.total])).toEqual([['Impulsione', 2], ['Meli Essencial', 1]]);
+  });
+});
+
+describe('melhor substituta (vem do cache atual)', () => {
+  it('maior "voce recebe", ignorando semEfeito; o resto vem em outras, da melhor para a pior', () => {
+    const itens = [
+      linha({ promocaoId: 'A', voceRecebe: 40 }),
+      linha({ promocaoId: 'B', voceRecebe: 90, semEfeito: true }),
+      linha({ promocaoId: 'C', voceRecebe: 70 }),
+      linha({ promocaoId: 'D', voceRecebe: null }),
+      linha({ itemId: 'MLB2', promocaoId: 'Z', voceRecebe: 999 }),
+      linha({ promocaoId: 'E', situacao: 'ativa', voceRecebe: 500 }),
+    ];
+    const r = propostasDoAnuncio('MLB1', foto(), itens);
+    expect(r.map((x) => x.promocaoId)).toEqual(['C', 'A', 'D']);
+  });
+
+  it('o cache vale mesmo quando a foto traz outra lista; sem cache cai nas propostas da foto', () => {
+    const f = foto({ propostas: [{ tipo: 'DEAL', promocaoId: 'F', nome: 'Foto', precoProposto: 1, fim: null, prazoParaAderir: null }] });
+    expect(propostasDoAnuncio('MLB1', f, [])).toEqual([]);
+    expect(propostasDoAnuncio('MLB1', f, null).map((x) => x.promocaoId)).toEqual(['F']);
+  });
+
+  it('montarAcompanhamento preenche substituta, outras e propostasAbertas pelo cache', () => {
+    const f = foto({ ativa: ativa(dia(2)), propostasAbertas: 9 });
+    const itens = [linha({ promocaoId: 'A', voceRecebe: 10 }), linha({ promocaoId: 'B', voceRecebe: 20 })];
+    const o = montarAcompanhamento([f], new Map(), AGORA, OPTS, { itens, rotuloDoTipo: rot }).terminaEmBreve[0];
+    expect(o.substituta?.promocaoId).toBe('B');
+    expect(o.outras.map((x) => x.promocaoId)).toEqual(['A']);
+    expect(o.propostasAbertas).toBe(2);
+  });
+});
+
+describe('PRAZO_ADERIR_ACABANDO', () => {
+  const prazo = dia(2);
+  const l = (over: Record<string, unknown> = {}) => linha({ prazoParaAderir: prazo, ...over });
+
+  it('entra com o ML bancando parte', () => {
+    expect(prazosParaAderir([l({ mlPercentual: 5, diferencaPorVenda: -3 })], AGORA, 3)).toHaveLength(1);
+  });
+  it('entra com "vs. hoje" >= 0', () => {
+    expect(prazosParaAderir([l({ diferencaPorVenda: 0 })], AGORA, 3)).toHaveLength(1);
+    expect(prazosParaAderir([l({ diferencaPorVenda: 1.2 })], AGORA, 3)).toHaveLength(1);
+  });
+  it('fica fora com "vs. hoje" < 0 sem ML, semEfeito, sem diferenca, sem prazo, prazo passado ou longe', () => {
+    expect(prazosParaAderir([l({ diferencaPorVenda: -1 })], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([l({ diferencaPorVenda: null })], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([l({ mlPercentual: 5, semEfeito: true })], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([l({ mlPercentual: 5, prazoParaAderir: null })], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([l({ mlPercentual: 5, prazoParaAderir: h(-1) })], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([l({ mlPercentual: 5, prazoParaAderir: dia(5) })], AGORA, 3)).toHaveLength(0);
+  });
+  it('fica fora se o anuncio ja participa DESSA promocao (ativa ou programada), mas nao de outra', () => {
+    const prop = l({ mlPercentual: 5 });
+    expect(prazosParaAderir([prop, linha({ situacao: 'ativa', promocaoId: 'P1' })], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([prop, linha({ situacao: 'programada', promocaoId: 'P1' })], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([prop, linha({ situacao: 'ativa', promocaoId: 'OUTRA' })], AGORA, 3)).toHaveLength(1);
+  });
+  it('fica fora com anuncio pausado ou finalizado (status da linha ou, na falta, o da foto); sem status avalia', () => {
+    const prop = l({ mlPercentual: 5 });
+    expect(prazosParaAderir([{ ...prop, statusAnuncio: 'paused' }], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([{ ...prop, statusAnuncio: 'closed' }], AGORA, 3)).toHaveLength(0);
+    expect(prazosParaAderir([{ ...prop, statusAnuncio: 'active' }], AGORA, 3)).toHaveLength(1);
+    expect(prazosParaAderir([prop], AGORA, 3)).toHaveLength(1);
+    // cache de versao anterior (sem statusAnuncio): vale o status da foto
+    expect(prazosParaAderir([prop], AGORA, 3, new Map([['MLB1', 'paused']]))).toHaveLength(0);
+    const a = montarAcompanhamento([foto({ statusAnuncio: 'paused' })], new Map(), AGORA, OPTS, { itens: [prop], rotuloDoTipo: rot });
+    expect(a.prazoAderir).toHaveLength(0);
+  });
+  it('uma linha por anuncio + proposta, ordenada pelo prazo', () => {
+    const r = prazosParaAderir(
+      [l({ promocaoId: 'A', mlPercentual: 5, prazoParaAderir: dia(2) }), l({ promocaoId: 'B', mlPercentual: 5, prazoParaAderir: dia(1) }), l({ itemId: 'MLB2', promocaoId: 'A', mlPercentual: 5, prazoParaAderir: dia(1.5) })],
+      AGORA, 3,
+    );
+    expect(r.map((x) => `${x.itemId}/${x.promocao.promocaoId}`)).toEqual(['MLB1/B', 'MLB2/A', 'MLB1/A']);
+    expect(r[0].prazo).toBe('falta 1 dia');
+  });
+});
+
+describe('resumoEmTexto agrupado (v47)', () => {
   it('vazio (null) quando nao ha nada a avisar', () => {
     expect(resumoEmTexto(montarAcompanhamento([foto()], new Map(), AGORA, OPTS), 10)).toBeNull();
     expect(resumoEmTexto(montarAcompanhamento([], new Map(), AGORA, OPTS), 10)).toBeNull();
   });
 
-  it('traz as duas listas, conta propostas e respeita o limite POR LISTA', () => {
-    const fotos = [1, 2, 3].map((i) => foto({ itemId: `MLB${i}`, ativa: ativa(h(i)), propostasAbertas: i === 1 ? 2 : 0 }));
-    fotos.push(foto({ itemId: 'MLB9', titulo: 'Sem promo' }));
-    const hist = new Map([['MLB9', [foto({ itemId: 'MLB9', tiradaEm: h(-6), ativa: ativa(dia(1)) })]]]);
-    const t = resumoEmTexto(montarAcompanhamento(fotos, hist, AGORA, OPTS), 2)!;
-    expect(t).toContain('Termina em até 3 dias (3)');
+  it('as tres secoes, com titulos do analytics, e do grupo so a linha (sem sub-linhas de anuncios)', () => {
+    const fim = '2026-11-08T23:59:00-03:00';
+    const fotos = Array.from({ length: 8 }, (_, i) =>
+      foto({
+        itemId: `MLB${i + 1}`, titulo: `Item ${i + 1}`,
+        ativa: { tipo: 'SELLER_CAMPAIGN', id: 'C1', nome: 'OUTUBRO 2026', fim: paraIso(fim) },
+        programadas: i < 2 ? [prog('X', dia(3), dia(20))] : [],
+      }),
+    );
+    fotos.push(foto({ itemId: 'MLB90', titulo: 'Sem promo' }));
+    const hist = new Map([['MLB90', [foto({ itemId: 'MLB90', tiradaEm: h(-6), ativa: ativa(dia(1)) })]]]);
+    const itens = [linha({ itemId: 'MLB50', titulo: 'Prazo', nome: 'Black Friday 2026', promocaoId: 'BF', mlPercentual: 4, diferencaPorVenda: 1.2, prazoParaAderir: dia(2) })];
+    const t = resumoEmTexto(montarAcompanhamento(fotos, hist, AGORA, OPTS, { itens, rotuloDoTipo: rot }), 10)!;
+    expect(t).toContain('⏳ Vencendo\n• OUTUBRO 2026 (Campanha propria) termina dom 08/11: 8 anúncios, 2 já cobertos');
+    expect(t).not.toContain('– MLB');
+    expect(t).not.toMatch(/^ {2}\+\d/m);
+    expect(t.split('\n').filter((x) => x.startsWith('• OUTUBRO'))).toHaveLength(1);
+    expect(t).toContain('🚫 Ficou sem promoção\n• MLB90 Sem promo — desde 05/11');
+    expect(t).toContain('📅 Prazo para aderir acabando\n• Black Friday 2026 · MLB50 Prazo — fecha sáb 07/11 · você recebe +R$ 1,20');
+  });
+
+  it('"termina hoje"; grupo 100% coberto e sem-data ficam fora; limite vale por secao', () => {
+    const cob = foto({ itemId: 'MLB1', ativa: ativa(dia(2)), programadas: [prog('X', dia(2), dia(9))] });
+    const sd = foto({ itemId: 'MLB2', ativa: { tipo: 'SMART', id: null, nome: 'Auto', fim: null } });
+    expect(resumoEmTexto(montarAcompanhamento([cob, sd], new Map(), AGORA, OPTS), 10)).toBeNull();
+    const hoje = [1, 2, 3].map((i) => foto({ itemId: `MLB${i}`, ativa: { tipo: 'DEAL', id: `P${i}`, nome: `Promo ${i}`, fim: h(i) } }));
+    const t = resumoEmTexto(montarAcompanhamento(hoje, new Map(), AGORA, OPTS), 2)!;
     expect(t).toContain('termina hoje');
-    expect(t).toContain('2 propostas abertas para substituir');
     expect(t).toContain('… e mais 1');
-    expect(t).toContain('Ficou sem promoção (1)');
-    expect(t).toContain('Sem promoção desde');
+  });
+});
+
+describe('aba Promoções volta ao formato da v45 (sem o bloco antigo)', () => {
+  it('o bloco "Vencendo / sem promoção" saiu da aba e mora na aba Acompanhamento', async () => {
+    const { readFileSync } = await import('node:fs');
+    const html = readFileSync(new URL('../../public/index.html', import.meta.url), 'utf-8');
+    const ini = html.indexOf('class="panel aba-promocoes"');
+    const promo = html.slice(ini, html.indexOf('</section>', ini));
+    expect(promo).not.toContain('id="acompBody"');
+    expect(promo).toContain('id="acompResumo"');
+    const ini2 = html.indexOf('class="panel aba-acompanhamento"');
+    expect(ini2).toBeGreaterThan(-1);
+    expect(html.slice(ini2, html.indexOf('</section>', ini2))).toContain('id="acompBody"');
   });
 });

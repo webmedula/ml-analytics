@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { config } from '../config';
 import { logger } from '../logger';
-import type { FotoPromocao, PropostaFoto } from '../core/promocoesAcompanhamento';
+import type { FotoPromocao, ProgramadaFoto, PropostaFoto } from '../core/promocoesAcompanhamento';
 
 /**
  * BANCO LOCAL (SQLite) — onde tudo fica guardado de verdade.
@@ -151,10 +151,16 @@ function migrar(banco: DatabaseSync): void {
       buybox_status_ml          TEXT,
       buybox_preco_para_ganhar  REAL,
       buybox_atualizado_em      TEXT,
-      varredura_ok              INTEGER NOT NULL DEFAULT 0
+      varredura_ok              INTEGER NOT NULL DEFAULT 0,
+      programadas_json          TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_promocoes_fotos_item ON promocoes_fotos(item_id, tirada_em);
   `);
+  // v47: a v46 guardava UMA programada; agora a lista. Banco da v46 ganha a coluna uma vez so.
+  const colunas = banco.prepare('PRAGMA table_info(promocoes_fotos)').all() as Array<{ name: string }>;
+  if (!colunas.some((c) => c.name === 'programadas_json')) {
+    banco.exec('ALTER TABLE promocoes_fotos ADD COLUMN programadas_json TEXT');
+  }
 }
 
 export function abrirBanco(): DatabaseSync {
@@ -283,6 +289,19 @@ function dePromocaoLinha(r: any): FotoPromocao {
   } catch {
     propostas = [];
   }
+  // Foto da v46 (sem a lista): usa a programada unica das colunas antigas, que ja traz o fim.
+  let programadas: ProgramadaFoto[] = [];
+  if (r.programadas_json) {
+    try {
+      programadas = JSON.parse(r.programadas_json);
+    } catch {
+      programadas = [];
+    }
+  } else if (r.promo_programada_tipo) {
+    programadas = [
+      { tipo: r.promo_programada_tipo, id: null, inicio: r.promo_programada_inicio ?? null, fim: r.promo_programada_fim ?? null, precoProposto: null, semEfeito: false },
+    ];
+  }
   return {
     itemId: r.item_id,
     tiradaEm: r.tirada_em,
@@ -294,9 +313,7 @@ function dePromocaoLinha(r: any): FotoPromocao {
     ativa: r.promo_ativa_tipo
       ? { tipo: r.promo_ativa_tipo, id: r.promo_ativa_id ?? null, nome: r.promo_ativa_nome ?? null, fim: r.promo_ativa_fim ?? null }
       : null,
-    programada: r.promo_programada_tipo
-      ? { tipo: r.promo_programada_tipo, inicio: r.promo_programada_inicio ?? null, fim: r.promo_programada_fim ?? null }
-      : null,
+    programadas,
     propostasAbertas: r.propostas_abertas ?? 0,
     propostas,
     buybox:
@@ -321,18 +338,20 @@ export function gravarFotosDePromocoes(fotos: FotoPromocao[], retencaoDias: numb
       promo_ativa_tipo, promo_ativa_id, promo_ativa_nome, promo_ativa_fim,
       promo_programada_tipo, promo_programada_inicio, promo_programada_fim,
       propostas_abertas, propostas_json,
-      buybox_situacao, buybox_status_ml, buybox_preco_para_ganhar, buybox_atualizado_em, varredura_ok
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      buybox_situacao, buybox_status_ml, buybox_preco_para_ganhar, buybox_atualizado_em, varredura_ok,
+      programadas_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   banco.exec('BEGIN');
   try {
     for (const f of fotos) {
       ins.run(
         f.tiradaEm, f.itemId, f.titulo, f.permalink, f.statusAnuncio, f.precoAtual, f.precoCheio,
         f.ativa?.tipo ?? null, f.ativa?.id ?? null, f.ativa?.nome ?? null, f.ativa?.fim ?? null,
-        f.programada?.tipo ?? null, f.programada?.inicio ?? null, f.programada?.fim ?? null,
+        f.programadas[0]?.tipo ?? null, f.programadas[0]?.inicio ?? null, f.programadas[0]?.fim ?? null,
         f.propostasAbertas, JSON.stringify(f.propostas),
         f.buybox?.situacao ?? null, f.buybox?.statusMl ?? null, f.buybox?.precoParaGanhar ?? null, f.buybox?.atualizadoEm ?? null,
         f.varreduraOk ? 1 : 0,
+        JSON.stringify(f.programadas),
       );
     }
     const corte = new Date(agora - retencaoDias * 86400000).toISOString();
