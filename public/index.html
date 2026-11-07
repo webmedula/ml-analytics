@@ -877,9 +877,14 @@ function renderPromocoes() {
     const nome = a.permalink ? '<a href="' + a.permalink + '" target="_blank" rel="noopener">' + esc(a.titulo || itemId) + '</a>' : esc(a.titulo || itemId);
     const hoje = 'hoje <b>' + fmtMoney(a.precoAtual) + '</b>' +
       (a.precoCheio != null && a.precoCheio !== a.precoAtual ? ' <span class="muted">(cheio ' + fmtMoney(a.precoCheio) + ')</span>' : '') +
-      (ativa ? ' <span class="muted">· ativa: ' + esc(ativa.nome || ativa.rotulo) + '</span>' : '') +
       (a.voceRecebeHoje != null ? ' · você recebe ~' + fmtMoney(a.voceRecebeHoje) : '');
-    const cab = '<tr class="item-head"><td colspan="7">' + nome + ' <span class="muted">' + itemId + '</span><div class="muted" style="margin-top:3px">' + hoje + '</div></td></tr>';
+    // v48: a promoção em vigor fica sempre à vista no cabeçalho do anúncio, mesmo sem proposta melhor.
+    const melhor = todas.some(l => l.itemId === itemId && l.situacao === 'proposta' && !l.semEfeito && (l.diferencaPorVenda ?? 0) > 0);
+    const emVigor = (ativa
+      ? '<span class="tag ativa">EM VIGOR: ' + esc(ativa.nome || ativa.rotulo) + '</span>'
+      : '<span class="tag proposta">sem promoção ativa</span>') +
+      (melhor ? '' : ' <span class="muted">· nenhuma proposta melhor que a atual</span>');
+    const cab = '<tr class="item-head"><td colspan="7">' + nome + ' <span class="muted">' + itemId + '</span><div class="muted" style="margin-top:3px">' + hoje + '</div><div style="margin-top:5px">' + emVigor + '</div></td></tr>';
     const linhas = ls.map(l => {
       const tags = (ehRelampago(l) ? '<span class="tag relampago">⚡ relâmpago</span> ' : '') +
         (l.mlBanca > 0 ? '<span class="tag mlbanca">ML banca</span> ' : '') +
@@ -888,14 +893,14 @@ function renderPromocoes() {
       const periodo = [fmtData(l.inicio), fmtData(l.fim)].filter(Boolean).join(' a ');
       const faixa = l.precoMinimo || l.precoMaximo ? '<div class="muted">aceita ' + fmtMoney(l.precoMinimo) + ' a ' + fmtMoney(l.precoMaximo) + '</div>' : '';
       const dif = l.diferencaPorVenda;
-      const difHtml = l.semEfeito ? '<span class="muted">não muda</span>' : dif == null ? '—' : '<b class="' + (dif >= 0 ? 'delta-up' : 'delta-down') + '">' + (dif >= 0 ? '+' : '−') + fmtMoney(Math.abs(dif)) + '</b>';
+      const difHtml = l.situacao === 'ativa' ? '<b class="delta-up">em vigor</b>' : l.semEfeito ? '<span class="muted">não muda</span>' : dif == null ? '—' : '<b class="' + (dif >= 0 ? 'delta-up' : 'delta-down') + '">' + (dif >= 0 ? '+' : '−') + fmtMoney(Math.abs(dif)) + '</b>';
       return '<tr class="promo-row">' +
         '<td>' + esc(l.rotulo) + (l.nome && l.nome !== l.rotulo ? '<div class="muted">' + esc(l.nome) + '</div>' : '') + '<div style="margin-top:4px">' + tags + '</div></td>' +
         '<td class="muted">' + (periodo || '—') + (l.prazoParaAderir ? '<div>aderir até ' + fmtData(l.prazoParaAderir) + '</div>' : '') + '</td>' +
         '<td class="num">' + fmtMoney(l.precoProposto) + (l.descontoPercentual != null ? '<div class="muted">−' + String(l.descontoPercentual).replace('.', ',') + '% do cheio</div>' : '') + faixa + '</td>' +
         '<td class="num">' + (l.mlBanca > 0 ? '~' + fmtMoney(l.mlBanca) : '—') + '</td>' +
         '<td class="num">' + (l.mlBanca > 0 && l.voceRecebe != null ? '~' : '') + fmtMoney(l.voceRecebe) + '</td>' +
-        '<td class="num">' + difHtml + '<div class="muted">' + (l.semEfeito ? 'preço acima do atual' : 'por venda') + '</div></td>' +
+        '<td class="num">' + difHtml + '<div class="muted">' + (l.situacao === 'ativa' ? 'é o que vale hoje' : l.semEfeito ? 'preço acima do atual' : 'por venda') + '</div></td>' +
         '<td>' + (l.situacao === 'proposta' && PROMO_ADERIVEL.test(l.tipo)
           ? '<button class="secondary" onclick="abrirAdesao(\'' + esc(l.itemId) + '\',\'' + esc(l.promocaoId || '') + '\',\'' + esc(l.tipo) + '\')">Participar</button>'
           : '') + '</td>' +
