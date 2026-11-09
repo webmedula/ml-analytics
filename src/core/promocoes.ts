@@ -265,6 +265,35 @@ export interface LinhaPromocao extends PromocaoNormalizada, ContaDaVenda {
   semEfeito?: boolean;
 }
 
+export interface AnuncioSemPromocao {
+  itemId: string;
+  titulo: string | null;
+  permalink: string | null;
+  precoAtual: number | null;
+  vendas30: number | null;
+}
+
+/** v49: anuncios lidos sem nenhuma linha de promocao, os que mais vendem primeiro. PURA. */
+export function anunciosSemPromocao(
+  anuncios: Pick<MlItemAttributes, 'id' | 'title' | 'permalink' | 'price'>[],
+  idsOk: Set<string>,
+  linhas: Pick<LinhaPromocao, 'itemId'>[],
+  vendas30: Map<string, number>,
+  precoDeVenda: Map<string, number | null> = new Map(),
+): AnuncioSemPromocao[] {
+  const comPromo = new Set(linhas.map((l) => l.itemId));
+  return anuncios
+    .filter((a) => idsOk.has(a.id) && !comPromo.has(a.id))
+    .map((a) => ({
+      itemId: a.id,
+      titulo: a.title ?? null,
+      permalink: a.permalink ?? null,
+      precoAtual: precoDeVenda.get(a.id) ?? num(a.price),
+      vendas30: vendas30.get(a.id) ?? null,
+    }))
+    .sort((a, b) => (b.vendas30 ?? -1) - (a.vendas30 ?? -1) || (a.titulo ?? '').localeCompare(b.titulo ?? '', 'pt-BR'));
+}
+
 export interface PromocoesResult {
   atualizadoEm: string;
   apiDisponivel: boolean;
@@ -274,6 +303,11 @@ export interface PromocoesResult {
   anunciosComErro: number;
   truncado: boolean;
   itens: LinhaPromocao[];
+  /**
+   * v49: anuncios lidos com sucesso que nao tem promocao nenhuma (nem ativa, nem programada, nem
+   * proposta do ML). Sem isso eles nao aparecem na aba, que so lista linhas de promocao.
+   */
+  semPromocao?: AnuncioSemPromocao[];
   /** chave (anuncio|tipo|campanha) -> primeira vez vista. Sobrevive entre varreduras. */
   vistas: Record<string, string>;
 }
@@ -418,7 +452,12 @@ async function doScan(): Promise<PromocoesResult> {
 
   const conv = getConversion();
   const fretePorItem = new Map<string, number>();
-  for (const c of conv?.items ?? []) if (c.vendas30 > 0) fretePorItem.set(c.itemId, c.frete30 / c.vendas30);
+  const vendas30 = new Map<string, number>();
+  for (const c of conv?.items ?? []) {
+    vendas30.set(c.itemId, c.vendas30);
+    if (c.vendas30 > 0) fretePorItem.set(c.itemId, c.frete30 / c.vendas30);
+  }
+  const precoDeVenda = new Map<string, number | null>();
 
   const anteriores = getPromocoes()?.vistas ?? {};
   const vistas: Record<string, string> = {};
@@ -473,6 +512,7 @@ async function doScan(): Promise<PromocoesResult> {
     const venda: PrecoDeVenda | null = await getSalePriceRaw(item.id).then(parsePrecoDeVenda).catch(() => null);
     const precoCheio = num(item.price);
     const precoAtual = venda?.preco ?? precoCheio;
+    precoDeVenda.set(item.id, precoAtual);
     const tarifaAtual = await tarifa(item, precoAtual);
     const freteAtual = await freteGratis(item, precoAtual);
     for (const raw of brutos) {
@@ -504,6 +544,7 @@ async function doScan(): Promise<PromocoesResult> {
   });
 
   const apiDisponivel = !(recusas > 0 && itens.length === 0);
+  const linhasFinais = ordenarLinhas(compararComOQueJaParticipa(semRelampagoDuplicada(itens)));
   const result: PromocoesResult = {
     atualizadoEm: agora,
     apiDisponivel,
@@ -511,7 +552,8 @@ async function doScan(): Promise<PromocoesResult> {
     anunciosAnalisados: attrs.length,
     anunciosComErro: erros,
     truncado: ids.length >= max,
-    itens: ordenarLinhas(compararComOQueJaParticipa(semRelampagoDuplicada(itens))),
+    itens: linhasFinais,
+    semPromocao: anunciosSemPromocao(attrs, idsOk, linhasFinais, vendas30, precoDeVenda),
     vistas,
   };
   persist(result);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { situacaoDaPromocao, contaDaVenda, montarLinha, normalizarPromocao, ordenarLinhas, semRelampagoDuplicada, compararComOQueJaParticipa, situacaoDoStatus, chaveDaPromocao, PromocoesResult } from './promocoes';
+import { situacaoDaPromocao, contaDaVenda, montarLinha, normalizarPromocao, ordenarLinhas, semRelampagoDuplicada, compararComOQueJaParticipa, situacaoDoStatus, chaveDaPromocao, anunciosSemPromocao, PromocoesResult } from './promocoes';
 import { filtrarPromocoes, linhaEmTexto } from './promocoesConsulta';
 
 const item = { id: 'MLB4109133481', title: 'Sensor Tpms', permalink: 'x', price: 78.9 };
@@ -243,5 +243,27 @@ describe('compararComOQueJaParticipa (MLB3752079801, 2026-11-05)', () => {
       [1470.02, null, true],
       [1470.02, -60.88, false],
     ]);
+  });
+});
+
+describe('anunciosSemPromocao (v49)', () => {
+  it('lista só anúncios lidos com sucesso e sem nenhuma linha, os que mais vendem primeiro', () => {
+    const anuncios = [
+      { id: 'MLB1', title: 'Com promo', permalink: 'p1', price: 10 },
+      { id: 'MLB2', title: 'Sem promo, vende pouco', permalink: 'p2', price: 20 },
+      { id: 'MLB3', title: 'Sem promo, vende muito', permalink: 'p3', price: 30 },
+      { id: 'MLB4', title: 'Leitura falhou', permalink: 'p4', price: 40 },
+      { id: 'MLB5', title: 'Sem vendas registradas', permalink: 'p5', price: 50 },
+    ];
+    const r = anunciosSemPromocao(
+      anuncios,
+      new Set(['MLB1', 'MLB2', 'MLB3', 'MLB5']),
+      [{ itemId: 'MLB1' }],
+      new Map([['MLB2', 1], ['MLB3', 9]]),
+      new Map([['MLB3', 27.9]]),
+    );
+    expect(r.map((a) => a.itemId)).toEqual(['MLB3', 'MLB2', 'MLB5']);
+    expect(r[0]).toEqual({ itemId: 'MLB3', titulo: 'Sem promo, vende muito', permalink: 'p3', precoAtual: 27.9, vendas30: 9 });
+    expect(r[2].vendas30).toBeNull();
   });
 });

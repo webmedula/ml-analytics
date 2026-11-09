@@ -858,8 +858,15 @@ function renderPromocoes() {
       ganho: melhores.length ? Math.max(...melhores.map(l => l.diferencaPorVenda)) : 0,
       prazo: prazos.length ? Math.min(...prazos) : Infinity,
       vale: melhores.length > 0,
+      vendas30: null,
     };
   });
+  // v49: anúncios que o ML não oferece promoção nenhuma (nem ativa, nem proposta). Entram sem linhas.
+  for (const a of promocoes.semPromocao || []) {
+    if (porItem.has(a.itemId)) continue;
+    resumo.push({ itemId: a.itemId, ls: [], ativa: null, titulo: a.titulo || a.itemId, ganho: 0, prazo: Infinity, vale: false,
+      vendas30: a.vendas30, nada: true, permalink: a.permalink, precoAtual: a.precoAtual });
+  }
   const resumoDe = new Map(resumo.map(r => [r.itemId, r]));
   const tiposDisponiveis = [...new Set(todas.map(l => l.rotulo).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
   if (promoTipo && !tiposDisponiveis.includes(promoTipo)) promoTipo = '';
@@ -870,6 +877,7 @@ function renderPromocoes() {
     vale:       { t: '✅ Vale a pena aderir', item: r => r.vale, linha: l => l.situacao === 'ativa' || ehMelhor(l) },
     melhor:     { t: 'Já no melhor', item: r => r.ativa && !r.vale },
     semativa:   { t: 'Sem promoção ativa', item: r => !r.ativa },
+    nenhuma:    { t: 'Sem nenhuma oferta do ML', item: r => r.nada },
     mlbanca:    { t: 'ML banca parte', item: r => r.ls.some(l => l.mlBanca > 0), linha: l => l.situacao === 'ativa' || l.mlBanca > 0 },
     relampago:  { t: '⚡ Relâmpago', item: r => r.ls.some(ehRelampago), linha: l => l.situacao === 'ativa' || ehRelampago(l) },
     programada: { t: 'Programadas', item: r => r.ls.some(l => l.situacao === 'programada'), linha: l => l.situacao !== 'proposta' },
@@ -885,7 +893,8 @@ function renderPromocoes() {
   const f = FILTROS[promoFiltro];
   const escolhidos = base.filter(f.item);
   const ORDENS = {
-    ganho: (a, b) => b.ganho - a.ganho || a.titulo.localeCompare(b.titulo, 'pt-BR'),
+    // Empate (ex.: anúncios sem promoção): os que mais vendem primeiro, que é o que dá para priorizar.
+    ganho: (a, b) => b.ganho - a.ganho || (!!a.nada - !!b.nada) || (b.vendas30 ?? -1) - (a.vendas30 ?? -1) || a.titulo.localeCompare(b.titulo, 'pt-BR'),
     prazo: (a, b) => a.prazo - b.prazo || b.ganho - a.ganho,
     nome:  (a, b) => a.titulo.localeCompare(b.titulo, 'pt-BR'),
   };
@@ -905,12 +914,19 @@ function renderPromocoes() {
   for (const r of escolhidos) {
     const ls = r.ls.filter(l => (!f.linha || f.linha(l)) && linhaDoTipo(l));
     ls.sort((a, b) => (ORDEM_SIT[a.situacao] ?? 9) - (ORDEM_SIT[b.situacao] ?? 9));
-    if (ls.length) grupos.set(r.itemId, ls);
+    if (ls.length || r.nada) grupos.set(r.itemId, ls);
   }
   const ativaDe = itemId => resumoDe.get(itemId)?.ativa;
   const filtros = Object.keys(FILTROS).map(k => [k, FILTROS[k].t, base.filter(FILTROS[k].item).length]);
 
   const rows = [...grupos.entries()].map(([itemId, ls]) => {
+    if (!ls.length) {
+      const r = resumoDe.get(itemId);
+      const nome = r.permalink ? '<a href="' + r.permalink + '" target="_blank" rel="noopener">' + esc(r.titulo) + '</a>' : esc(r.titulo);
+      return '<tr class="item-head"><td colspan="7">' + nome + ' <span class="muted">' + itemId + '</span>' +
+        '<div class="muted" style="margin-top:3px">hoje <b>' + fmtMoney(r.precoAtual) + '</b>' + (r.vendas30 != null ? ' · ' + r.vendas30 + ' venda(s) em 30 dias' : '') + '</div>' +
+        '<div style="margin-top:5px"><span class="tag proposta">sem promoção ativa</span> <span class="muted">· o ML não oferece nenhuma promoção para este anúncio agora; dá para criar um desconto próprio no ML</span></div></td></tr>';
+    }
     const a = ls[0];
     const ativa = ativaDe(itemId);
     const nome = a.permalink ? '<a href="' + a.permalink + '" target="_blank" rel="noopener">' + esc(a.titulo || itemId) + '</a>' : esc(a.titulo || itemId);
