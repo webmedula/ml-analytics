@@ -59,6 +59,7 @@
   .chartwrap { position: relative; width: 100%; height: 230px; }
   .detail-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
   input.mini { padding: 7px 10px; border-radius: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); font-size: 13px; width: 70px; }
+  select.mini { padding: 7px 10px; border-radius: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); font-size: 13px; }
   .qrow { padding: 11px 2px; border-bottom: 1px solid var(--border); }
   .qrow .qtext { font-size: 14px; margin-bottom: 3px; }
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
@@ -671,8 +672,10 @@ async function carregarSerie(itemId) {
 // --- aba PROMOÇÕES ---
 // Mostra o que o ML propõe e quanto sobra por venda. "Participar" simula e adere aqui mesmo (v39).
 let promocoes = null;
-let promoFiltro = 'mlbanca'; // v44: o que interessa primeiro é onde o ML banca parte
+let promoFiltro = 'todos'; // v49: filtros por anúncio; ordenação põe o maior ganho primeiro
 let promoBusca = '';
+let promoTipo = '';
+let promoOrdem = 'ganho';
 const ehRelampago = l => /LIGHTNING|DOD/.test(l.tipo);
 // Tipos que a adesao sabe montar (src/core/promocoesAdesao.ts).
 const PROMO_ADERIVEL = /^(SMART|PRICE_MATCHING|PRICE_MATCHING_MELI_ALL|SMART_LIGHTNING|UNHEALTHY_STOCK|DEAL|DOD|LIGHTNING|MARKETPLACE_CAMPAIGN|SELLER_CAMPAIGN)$/;
@@ -832,44 +835,80 @@ function fmtData(iso) {
 function renderPromocoes() {
   const el = document.getElementById('promocoesBody');
   const ctl = document.getElementById('promocoesControls');
-  ctl.innerHTML = '<input class="mini" style="width:200px" placeholder="buscar anúncio ou MLB" value="' + esc(promoBusca) + '" ' +
-    'oninput="promoBusca=this.value; renderPromocoes(); this.focus(); this.setSelectionRange(this.value.length,this.value.length)" />' +
-    '<button class="secondary" onclick="carregarPromocoes(true)">Varrer agora</button>';
-  if (!promocoes) return;
+  if (!promocoes) {
+    ctl.innerHTML = '<button class="secondary" onclick="carregarPromocoes(true)">Varrer agora</button>';
+    return;
+  }
   if (promocoes.apiDisponivel === false) {
     el.innerHTML = '<div class="insight">' + esc(promocoes.avisoDaApi || 'O ML recusou a leitura de promoções.') + '</div>';
     return;
   }
   const todas = promocoes.itens || [];
   const propostas = todas.filter(l => l.situacao === 'proposta');
-  const filtros = [
-    ['todas', 'Todas', todas.length],
-    ['ativa', 'Ativas', todas.filter(l => l.situacao === 'ativa').length],
-    ['programada', 'Programadas', todas.filter(l => l.situacao === 'programada').length],
-    ['propostas', 'Novas propostas', propostas.length],
-    ['relampago', '⚡ Relâmpago', todas.filter(ehRelampago).length],
-    ['mlbanca', 'ML banca parte', todas.filter(l => l.mlBanca > 0).length],
-    ['novas', 'Vistas nas últimas 24h', propostas.filter(ehNovo).length],
-  ];
+  const ehMelhor = l => l.situacao === 'proposta' && !l.semEfeito && (l.diferencaPorVenda ?? 0) > 0;
+
+  // v49: os filtros contam e escolhem ANÚNCIOS (não linhas) e combinam com tipo, busca e ordenação.
+  const porItem = new Map();
+  for (const l of todas) { if (!porItem.has(l.itemId)) porItem.set(l.itemId, []); porItem.get(l.itemId).push(l); }
+  const resumo = [...porItem.entries()].map(([itemId, ls]) => {
+    const melhores = ls.filter(ehMelhor);
+    const prazos = ls.filter(l => l.situacao === 'proposta' && l.prazoParaAderir).map(l => Date.parse(l.prazoParaAderir)).filter(n => !isNaN(n));
+    return {
+      itemId, ls, ativa: ls.find(l => l.situacao === 'ativa'), titulo: ls[0].titulo || itemId,
+      ganho: melhores.length ? Math.max(...melhores.map(l => l.diferencaPorVenda)) : 0,
+      prazo: prazos.length ? Math.min(...prazos) : Infinity,
+      vale: melhores.length > 0,
+    };
+  });
+  const resumoDe = new Map(resumo.map(r => [r.itemId, r]));
+  const tiposDisponiveis = [...new Set(todas.map(l => l.rotulo).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  if (promoTipo && !tiposDisponiveis.includes(promoTipo)) promoTipo = '';
+
+  // Cada filtro diz quais anúncios entram e, dentro deles, quais linhas mostrar (a ativa sempre aparece, para comparar).
+  const FILTROS = {
+    todos:      { t: 'Todos', item: () => true },
+    vale:       { t: '✅ Vale a pena aderir', item: r => r.vale, linha: l => l.situacao === 'ativa' || ehMelhor(l) },
+    melhor:     { t: 'Já no melhor', item: r => r.ativa && !r.vale },
+    semativa:   { t: 'Sem promoção ativa', item: r => !r.ativa },
+    mlbanca:    { t: 'ML banca parte', item: r => r.ls.some(l => l.mlBanca > 0), linha: l => l.situacao === 'ativa' || l.mlBanca > 0 },
+    relampago:  { t: '⚡ Relâmpago', item: r => r.ls.some(ehRelampago), linha: l => l.situacao === 'ativa' || ehRelampago(l) },
+    programada: { t: 'Programadas', item: r => r.ls.some(l => l.situacao === 'programada'), linha: l => l.situacao !== 'proposta' },
+    novas:      { t: 'Vistas nas últimas 24h', item: r => r.ls.some(l => l.situacao === 'proposta' && ehNovo(l)), linha: l => l.situacao === 'ativa' || ehNovo(l) },
+  };
+  if (!FILTROS[promoFiltro]) promoFiltro = 'todos';
+  const linhaDoTipo = l => !promoTipo || l.rotulo === promoTipo || l.situacao === 'ativa';
+  const passaTipo = r => !promoTipo || r.ls.some(l => l.rotulo === promoTipo);
   const q = promoBusca.trim().toUpperCase();
-  let lista = todas;
-  if (promoFiltro === 'ativa' || promoFiltro === 'programada') lista = todas.filter(l => l.situacao === promoFiltro);
-  if (promoFiltro === 'propostas') lista = propostas;
-  if (promoFiltro === 'relampago') lista = lista.filter(ehRelampago);
-  if (promoFiltro === 'mlbanca') {
-    // Mostra também a promoção ativa do anúncio, para comparar com o que você já recebe.
-    const comMl = new Set(lista.filter(l => l.mlBanca > 0).map(l => l.itemId));
-    lista = lista.filter(l => l.mlBanca > 0 || (l.situacao === 'ativa' && comMl.has(l.itemId)));
-  }
-  if (promoFiltro === 'novas') lista = propostas.filter(ehNovo);
-  if (q) lista = lista.filter(l => l.itemId.toUpperCase().includes(q) || (l.titulo || '').toUpperCase().includes(q));
+  const passaBusca = r => !q || r.itemId.toUpperCase().includes(q) || r.titulo.toUpperCase().includes(q);
+  const base = resumo.filter(r => passaTipo(r) && passaBusca(r));
+
+  const f = FILTROS[promoFiltro];
+  const escolhidos = base.filter(f.item);
+  const ORDENS = {
+    ganho: (a, b) => b.ganho - a.ganho || a.titulo.localeCompare(b.titulo, 'pt-BR'),
+    prazo: (a, b) => a.prazo - b.prazo || b.ganho - a.ganho,
+    nome:  (a, b) => a.titulo.localeCompare(b.titulo, 'pt-BR'),
+  };
+  escolhidos.sort(ORDENS[promoOrdem] || ORDENS.ganho);
+
+  const opt = (v, t, atual) => '<option value="' + esc(v) + '"' + (v === atual ? ' selected' : '') + '>' + esc(t) + '</option>';
+  ctl.innerHTML = '<input id="promoBuscaInput" class="mini" style="width:200px" placeholder="buscar anúncio ou MLB" value="' + esc(promoBusca) + '" ' +
+    'oninput="promoBusca=this.value; renderPromocoes(); const i=document.getElementById(\'promoBuscaInput\'); i.focus(); i.setSelectionRange(i.value.length,i.value.length)" />' +
+    '<select class="mini" onchange="promoTipo=this.value; renderPromocoes()">' + opt('', 'Todos os tipos', promoTipo) + tiposDisponiveis.map(t => opt(t, t, promoTipo)).join('') + '</select>' +
+    '<select class="mini" onchange="promoOrdem=this.value; renderPromocoes()">' +
+      opt('ganho', 'Ordenar: maior ganho', promoOrdem) + opt('prazo', 'Ordenar: prazo para aderir', promoOrdem) + opt('nome', 'Ordenar: nome', promoOrdem) + '</select>' +
+    '<button class="secondary" onclick="carregarPromocoes(true)">Varrer agora</button>';
 
   // Agrupa por anúncio, como a tela do ML. Dentro do anúncio: ativa, programadas, propostas.
   const ORDEM_SIT = { ativa: 0, programada: 1, proposta: 2, outra: 3 };
   const grupos = new Map();
-  for (const l of lista) { if (!grupos.has(l.itemId)) grupos.set(l.itemId, []); grupos.get(l.itemId).push(l); }
-  for (const ls of grupos.values()) ls.sort((a, b) => (ORDEM_SIT[a.situacao] ?? 9) - (ORDEM_SIT[b.situacao] ?? 9));
-  const ativaDe = itemId => todas.find(l => l.itemId === itemId && l.situacao === 'ativa');
+  for (const r of escolhidos) {
+    const ls = r.ls.filter(l => (!f.linha || f.linha(l)) && linhaDoTipo(l));
+    ls.sort((a, b) => (ORDEM_SIT[a.situacao] ?? 9) - (ORDEM_SIT[b.situacao] ?? 9));
+    if (ls.length) grupos.set(r.itemId, ls);
+  }
+  const ativaDe = itemId => resumoDe.get(itemId)?.ativa;
+  const filtros = Object.keys(FILTROS).map(k => [k, FILTROS[k].t, base.filter(FILTROS[k].item).length]);
 
   const rows = [...grupos.entries()].map(([itemId, ls]) => {
     const a = ls[0];
@@ -879,11 +918,11 @@ function renderPromocoes() {
       (a.precoCheio != null && a.precoCheio !== a.precoAtual ? ' <span class="muted">(cheio ' + fmtMoney(a.precoCheio) + ')</span>' : '') +
       (a.voceRecebeHoje != null ? ' · você recebe ~' + fmtMoney(a.voceRecebeHoje) : '');
     // v48: a promoção em vigor fica sempre à vista no cabeçalho do anúncio, mesmo sem proposta melhor.
-    const melhor = todas.some(l => l.itemId === itemId && l.situacao === 'proposta' && !l.semEfeito && (l.diferencaPorVenda ?? 0) > 0);
+    const { vale: melhor, ganho: ganhoMax } = resumoDe.get(itemId);
     const emVigor = (ativa
       ? '<span class="tag ativa">EM VIGOR: ' + esc(ativa.nome || ativa.rotulo) + '</span>'
       : '<span class="tag proposta">sem promoção ativa</span>') +
-      (melhor ? '' : ' <span class="muted">· nenhuma proposta melhor que a atual</span>');
+      (melhor ? ' <span class="tag mlbanca">até +' + fmtMoney(ganhoMax) + ' por venda</span>' : ' <span class="muted">· nenhuma proposta melhor que a atual</span>');
     const cab = '<tr class="item-head"><td colspan="7">' + nome + ' <span class="muted">' + itemId + '</span><div class="muted" style="margin-top:3px">' + hoje + '</div><div style="margin-top:5px">' + emVigor + '</div></td></tr>';
     const linhas = ls.map(l => {
       const tags = (ehRelampago(l) ? '<span class="tag relampago">⚡ relâmpago</span> ' : '') +
@@ -919,8 +958,9 @@ function renderPromocoes() {
     '</div></div>' +
     '<div class="row" style="margin-bottom:4px">' + filtros.map(([k, t, n]) =>
       '<button class="chip' + (promoFiltro === k ? ' active' : '') + '" onclick="setPromoFiltro(\'' + k + '\')">' + t + ' · ' + n + '</button>').join('') + '</div>' +
+    '<div class="muted" style="margin-bottom:8px">Os números contam anúncios. ' + grupos.size + ' anúncio(s) na lista.</div>' +
     (grupos.size === 0
-      ? '<div class="muted" style="padding:16px 0;text-align:center">Nenhuma promoção neste filtro.</div>'
+      ? '<div class="muted" style="padding:16px 0;text-align:center">Nenhum anúncio neste filtro.</div>'
       : '<div class="table-scroll"><table><thead><tr><th>Promoção</th><th>Período</th><th class="num">Preço proposto</th>' +
         '<th class="num">ML banca</th><th class="num">Você recebe</th><th class="num">vs. hoje</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>');
 }
