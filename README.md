@@ -1,5 +1,7 @@
 # tiny-analytics
 
+> **v50 (2026-11-14):** aba **Custos** com o diagnóstico de custos (etapa 1 da análise de custos): quanto do faturamento tem custo no Tiny, o imposto que saiu de fato nas notas de venda (lido do backup do Tiny, `BACKUP_BASE_URL` + `BACKUP_API_KEY` = a `PANEL_API_KEY` do backup 0.10.0), produtos com custo do Tiny longe da nota de importação, preço de custo × custo médio divergentes, kits sem custo e os 30 produtos que mais faturam com custo, imposto e margem. Só leitura. Rota `GET /api/custos/diagnostico` e ferramenta `diagnostico_de_custos` para o Gerente.
+
 > **v49 (2026-11-09):** filtros da aba Promoções passam a contar e escolher anúncios: "Vale a pena aderir" (há proposta que rende mais que a atual), "Já no melhor", "Sem promoção ativa", além dos antigos. Novos seletores de tipo de promoção e de ordenação (maior ganho, prazo para aderir, nome). Abre em "Todos", ordenado pelo maior ganho; o cabeçalho do anúncio mostra "até +R$ X por venda". A varredura agora guarda também os anúncios sem nenhuma promoção (`semPromocao`), que entram em "Sem promoção ativa" e no filtro "Sem nenhuma oferta do ML", os que mais vendem primeiro.
 
 > **v48 (2026-11-07):** na aba Promoções, cada anúncio mostra no cabeçalho a promoção EM VIGOR (ou "sem promoção ativa") e avisa quando nenhuma proposta é melhor que a atual; a linha ativa mostra "em vigor" em vez de +R$ 0,00.

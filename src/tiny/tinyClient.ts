@@ -64,7 +64,25 @@ export function extrairProdutos(resposta: any): any[] {
  * Normaliza um produto do Tiny, tolerando variacao de nomes entre versoes.
  * `custo` fica null quando nao ha valor utilizavel — melhor ausente que zero fingindo ser custo.
  */
-export function normalizarProduto(bruto: any): { sku: string | null; descricao: string | null; custo: number | null } {
+export interface ProdutoNormalizado {
+  sku: string | null;
+  descricao: string | null;
+  /** Custo usado na margem: preco de custo; se vazio, custo medio. */
+  custo: number | null;
+  /** v50: os dois campos do Tiny separados, pro diagnostico comparar. */
+  custoPreco?: number | null;
+  custoMedio?: number | null;
+  /** v50: tipo do produto no Tiny (S simples, K kit, V com variacoes, F fabricado, M materia-prima), quando vier. */
+  tipo?: string | null;
+}
+
+/** Numero positivo ou null (aceita "15,90"). */
+function positivo(c: unknown): number | null {
+  const n = typeof c === 'string' ? Number(c.replace(',', '.')) : Number(c);
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+}
+
+export function normalizarProduto(bruto: any): ProdutoNormalizado {
   const p = bruto?.produto ?? bruto ?? {};
   const sku = p.sku ?? p.codigo ?? null;
 
@@ -84,16 +102,23 @@ export function normalizarProduto(bruto: any): { sku: string | null; descricao: 
     }
   }
 
+  const custoPreco = [p.precoCusto, p.preco_custo, precos.precoCusto, precos.preco_custo].map(positivo).find((v) => v != null) ?? null;
+  const custoMedio = [p.precoCustoMedio, p.preco_custo_medio, precos.precoCustoMedio, precos.preco_custo_medio].map(positivo).find((v) => v != null) ?? null;
+  const tipo = typeof p.tipo === 'string' && p.tipo.trim() ? p.tipo.trim().toUpperCase() : null;
+
   return {
     sku: sku ? String(sku).trim() : null,
     descricao: p.descricao ?? p.nome ?? null,
     custo,
+    custoPreco,
+    custoMedio,
+    tipo,
   };
 }
 
 /** Lista produtos paginando. `limite` protege contra catalogo gigante numa primeira execucao. */
-export async function listarProdutos(limite = 1000): Promise<Array<{ sku: string | null; descricao: string | null; custo: number | null }>> {
-  const out: Array<{ sku: string | null; descricao: string | null; custo: number | null }> = [];
+export async function listarProdutos(limite = 1000): Promise<ProdutoNormalizado[]> {
+  const out: ProdutoNormalizado[] = [];
   const tamanhoPagina = 100;
   let offset = 0;
 

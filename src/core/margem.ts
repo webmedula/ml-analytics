@@ -25,6 +25,8 @@ export interface LacunaDoAnuncio {
   /** Quanto esse anuncio vendeu (liquido) na janela — e o que ordena o esforco de cadastro. */
   liquido: number;
   unidades: number;
+  /** v50: faturamento bruto na janela (preco x unidades), base do imposto estimado. */
+  bruto?: number;
 }
 
 /**

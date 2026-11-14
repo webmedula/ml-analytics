@@ -11,7 +11,7 @@ function inteiroPositivo(v: string | undefined, padrao: number): number {
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v49 (2026-11-09)',
+  appVersion: 'analytics v50 (2026-11-14)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -68,6 +68,16 @@ export const config = {
   /** Por quanto tempo o custo lido do Tiny e considerado valido. Custo muda pouco; cada consulta
    * e uma chamada ao ERP, e menos renovacao de token = menos risco de conflito. */
   custosValidadeHoras: Number(process.env.CUSTOS_VALIDADE_HORAS || 24),
+
+  // --- v50: diagnostico de custos ---
+  /** Backup do Tiny (mcs-backup-tiny): soma os XMLs das notas e devolve o imposto real das vendas e o
+   * custo das importacoes por produto (GET /painel/api/impostos). Vazio = diagnostico sem imposto. */
+  backupBaseUrl: (process.env.BACKUP_BASE_URL || '').replace(/\/+$/, ''),
+  /** A PANEL_API_KEY do backup (cabecalho x-api-key). */
+  backupApiKey: process.env.BACKUP_API_KEY || '',
+  /** Diferenca (%) entre preco de custo e custo medio do Tiny, ou entre o custo do Tiny e o da nota de
+   * importacao, a partir da qual o diagnostico aponta o produto. */
+  custoDivergenciaPct: Number(process.env.CUSTO_DIVERGENCIA_PCT || 15),
 
   // --- assistente (Telegram) ---
   /** 'anthropic' | 'openrouter'. Vazio = usa a chave que estiver configurada. */

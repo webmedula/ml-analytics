@@ -84,3 +84,11 @@ describe('procurarCamposDeCusto', () => {
     expect(() => procurarCamposDeCusto(ciclico)).not.toThrow();
   });
 });
+
+describe('normalizarProduto v50: os dois custos e o tipo separados', () => {
+  it('devolve preco de custo, custo medio e tipo sem mudar o custo usado na margem', () => {
+    const p = normalizarProduto({ sku: 'A', tipo: 'k', precos: { precoCusto: '10,50', precoCustoMedio: 12 } });
+    expect(p).toMatchObject({ custo: 10.5, custoPreco: 10.5, custoMedio: 12, tipo: 'K' });
+    expect(normalizarProduto({ sku: 'B', precoCustoMedio: 9 })).toMatchObject({ custo: 9, custoPreco: null, custoMedio: 9, tipo: null });
+  });
+});

@@ -9,6 +9,7 @@ import { chaveSku, emparelhar, obterCustos } from '../core/custos';
 import { lacunasParaCsv, margemDaVenda } from '../core/margem';
 import { montarFila, resumirFila } from '../core/filaRecriacao';
 import { getMargem, refreshMargem } from '../core/margemScan';
+import { obterDiagnostico } from '../core/diagnosticoCustos';
 import { montarIndice, sugerirCorrespondencia } from '../core/skuMatch';
 import { lerPaginacao, procurarSkuNoTiny } from '../tiny/tinyClient';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
@@ -246,6 +247,25 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
     } catch (err: any) {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao montar a fila' };
+    }
+  });
+
+  /**
+   * v50: diagnostico de custos (etapa 1 da analise de custos). Cobertura de custo por faturamento,
+   * divergencias no Tiny, kits sem custo, imposto real das notas (via backup), conferencia com a nota
+   * de importacao e os 30 produtos que mais faturam. So leitura. ?refresh=1 refaz tudo.
+   */
+  app.get('/api/custos/diagnostico', async (req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado. Acesse /oauth/ml/login para conectar.' };
+    }
+    const { refresh } = req.query as { refresh?: string };
+    try {
+      return await obterDiagnostico(refresh === '1');
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro ao montar o diagnostico de custos' };
     }
   });
 
