@@ -60,6 +60,7 @@
   .detail-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
   input.mini { padding: 7px 10px; border-radius: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); font-size: 13px; width: 70px; }
   select.mini { padding: 7px 10px; border-radius: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); font-size: 13px; }
+  .aba-custos td.num { white-space: nowrap; }
   .qrow { padding: 11px 2px; border-bottom: 1px solid var(--border); }
   .qrow .qtext { font-size: 14px; margin-bottom: 3px; }
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
@@ -108,6 +109,7 @@
     <button class="tab" data-aba="reposicao" onclick="setAba('reposicao')">Reposição</button>
     <button class="tab" data-aba="promocoes" onclick="setAba('promocoes')">Promoções</button>
     <button class="tab" data-aba="acompanhamento" onclick="setAba('acompanhamento')">Acompanhamento</button>
+    <button class="tab" data-aba="custos" onclick="setAba('custos')">Custos</button>
   </div>
 
   <section class="panel" id="keyPanel" style="display:none">
@@ -175,6 +177,14 @@
     </div>
     <div id="acompBody"></div>
   </section>
+
+  <section class="panel aba-custos" style="display:none">
+    <div class="detail-head">
+      <h2 style="margin:0">Diagnóstico de custos</h2>
+      <div class="row"><button class="secondary" onclick="carregarCustos(true)">Refazer agora</button></div>
+    </div>
+    <div id="custosBody"><div class="muted">Abra a aba para montar o diagnóstico.</div></div>
+  </section>
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -225,10 +235,12 @@ function setAba(nova) {
   document.querySelector('.aba-reposicao').style.display = nova === 'reposicao' ? '' : 'none';
   document.querySelector('.aba-promocoes').style.display = nova === 'promocoes' ? '' : 'none';
   document.querySelector('.aba-acompanhamento').style.display = nova === 'acompanhamento' ? '' : 'none';
+  document.querySelector('.aba-custos').style.display = nova === 'custos' ? '' : 'none';
   if (nova === 'desempenho') renderDesempenho();
   if (nova === 'reposicao') renderReposicao();
   if (nova === 'promocoes') carregarPromocoes();
   if (nova === 'acompanhamento') carregarAcompanhamento();
+  if (nova === 'custos') carregarCustos(false);
 }
 
 /** Variação percentual, com o mesmo cuidado do backend: sair do zero não vira "+infinito%". */
@@ -705,6 +717,67 @@ const fmtBRT = iso => {
   return p(d.getUTCDate()) + '/' + p(d.getUTCMonth() + 1) + ' ' + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes());
 };
 const fmtDiaBRT = iso => fmtBRT(iso).slice(0, 5);
+
+// --- v50: diagnóstico de custos (/api/custos/diagnostico) ---
+let custos = null;
+function fmtPct(n) { return n == null ? '—' : String(n).replace('.', ',') + '%'; }
+async function carregarCustos(forcar) {
+  const el = document.getElementById('custosBody');
+  el.innerHTML = '<div class="muted">Montando o diagnóstico (lê o Mercado Livre, o Tiny e as notas do backup; pode levar um minuto)...</div>';
+  try { custos = await api('/api/custos/diagnostico' + (forcar ? '?refresh=1' : '')); }
+  catch (e) { el.innerHTML = '<div class="insight bad">Não consegui montar o diagnóstico: ' + esc(e.message) + '</div>'; return; }
+  renderCustos();
+}
+function renderCustos() {
+  const d = custos, el = document.getElementById('custosBody');
+  if (!d) return;
+  const tabela = (cab, linhas, vazio) => linhas.length
+    ? '<div class="table-scroll"><table><thead><tr>' + cab + '</tr></thead><tbody>' + linhas.join('') + '</tbody></table></div>'
+    : '<div class="muted" style="margin-top:8px">' + (vazio || 'Nada a apontar.') + '</div>';
+  const sec = (t, sub) => '<h2 style="margin:22px 0 4px">' + t + '</h2>' + (sub ? '<div class="muted">' + sub + '</div>' : '');
+  const cor = (v, bom, ruim) => v == null ? '' : (v >= bom ? 'ok' : (v < ruim ? 'bad' : 'warn'));
+  const c = d.cobertura, im = d.impostos;
+  let h = '<div class="muted">Atualizado ' + esc(fmtHora(d.atualizadoEm)) + ' · vendas dos últimos ' + d.janelaDias + ' dias · ' + d.tiny.produtosLidos + ' produtos lidos do Tiny</div>';
+  h += '<div class="cards" style="margin-top:12px">' +
+    '<div class="kpi disabled"><div class="t">Faturamento com custo</div><div class="v ' + cor(c.coberturaPorFaturamento, 90, 70) + '">' + fmtPct(c.coberturaPorFaturamento) + '</div><div class="sub">' + fmtPct(c.coberturaPorAnuncio) + ' dos anúncios</div></div>' +
+    '<div class="kpi disabled"><div class="t">Imposto real nas vendas</div><div class="v">' + (im.disponivel ? fmtPct(im.percentualGeral) : '—') + '</div><div class="sub">' + esc(im.disponivel ? (im.periodo + ' · ' + im.notasLidas + ' notas') : (im.calculando ? 'o backup está somando as notas' : 'indisponível')) + '</div></div>' +
+    '<div class="kpi disabled"><div class="t">Custo longe da nota de importação</div><div class="v ' + (d.importacao.divergentes.length ? 'warn' : 'ok') + '">' + (d.importacao.disponivel ? d.importacao.divergentes.length : '—') + '</div><div class="sub">' + d.importacao.conferidos + ' produtos conferidos</div></div>' +
+    '<div class="kpi disabled"><div class="t">Preço de custo × custo médio</div><div class="v ' + (d.divergenciasTiny.length ? 'warn' : 'ok') + '">' + d.divergenciasTiny.length + '</div><div class="sub">diferença grande no Tiny</div></div>' +
+    '</div>';
+  if (d.achados.length) h += '<div class="insight" style="margin-top:14px"><div>' + d.achados.map(a => '• ' + esc(a)).join('<br>') + '</div></div>';
+  if (!im.disponivel && im.motivo) h += '<div class="insight warn" style="margin-top:10px">Imposto: ' + esc(im.motivo) + (im.calculando ? ' <a href="#" onclick="carregarCustos(false); return false">tentar de novo</a>' : '') + '</div>';
+  if (im.observacao) h += '<div class="insight warn" style="margin-top:10px">' + esc(im.observacao) + '</div>';
+
+  h += sec('Os ' + d.top.length + ' produtos que mais faturam', 'Confira se o custo de cada um está certo. Margem = líquido (já sem tarifa e frete do ML) − mercadoria − imposto. "—" quer dizer que falta dado, não que é zero.');
+  h += tabela('<th>Produto</th><th class="num">Un.</th><th class="num">Bruto</th><th class="num">Líquido</th><th class="num">Custo un.</th><th class="num">Nota import.</th><th class="num">Imposto</th><th class="num">Margem</th><th class="num">Margem %</th>',
+    d.top.map(t => '<tr><td class="title-cell" title="' + esc(t.titulo) + '"><b>' + esc(t.sku) + '</b> <span class="muted">' + esc(t.titulo) + (t.anuncios > 1 ? ' · ' + t.anuncios + ' anúncios' : '') + '</span></td>' +
+      '<td class="num">' + t.unidades + '</td><td class="num">' + fmtMoney(t.bruto) + '</td><td class="num">' + fmtMoney(t.liquido) + '</td>' +
+      '<td class="num">' + (t.custoUnitario == null ? '<span class="tag perdendo">sem custo</span>' : fmtMoney(t.custoUnitario)) + '</td>' +
+      '<td class="num">' + (t.custoNotaImportacao == null ? '—' : fmtMoney(t.custoNotaImportacao) + (t.diferencaImportacaoPct != null ? ' <span class="muted">(' + (t.diferencaImportacaoPct > 0 ? '+' : '') + fmtPct(t.diferencaImportacaoPct) + ')</span>' : '')) + '</td>' +
+      '<td class="num">' + (t.impostoEstimado == null ? '—' : fmtMoney(t.impostoEstimado) + ' <span class="muted">' + fmtPct(t.impostoPct) + (t.impostoOrigem === 'geral' ? ' média' : '') + '</span>') + '</td>' +
+      '<td class="num">' + fmtMoney(t.margem) + '</td><td class="num">' + fmtPct(t.margemPct) + '</td></tr>'), 'Nenhuma venda na janela.');
+
+  h += sec('Custo do Tiny longe da nota de importação', 'Custo por unidade pela nota de entrada (valor aduaneiro + impostos de importação + despesas da nota). Despachante e frete até a MCS não estão na nota, então o Tiny costuma ficar um pouco acima. ' + esc(d.importacao.observacao || ''));
+  h += tabela('<th>Produto</th><th class="num">Custo no Tiny</th><th class="num">Custo pela nota</th><th class="num">Diferença</th><th>Última entrada</th><th class="num">Líquido ' + d.janelaDias + 'd</th>',
+    d.importacao.divergentes.map(x => '<tr><td><b>' + esc(x.sku) + '</b> <span class="muted">' + esc(x.descricao) + '</span></td><td class="num">' + fmtMoney(x.custoTiny) + '</td><td class="num">' + fmtMoney(x.custoNota) + '</td><td class="num">' + (x.diferencaPct > 0 ? '+' : '') + fmtPct(x.diferencaPct) + '</td><td>' + esc(x.ultimaEntrada) + '</td><td class="num">' + fmtMoney(x.liquido) + '</td></tr>'),
+    d.importacao.disponivel ? 'Nenhum produto com diferença grande.' : 'Depende das notas do backup.');
+  if (d.importacao.semCustoNoTinyComNota.length) {
+    h += sec('Sem custo no Tiny, mas com nota de importação', 'O custo da nota é um bom ponto de partida para cadastrar.');
+    h += tabela('<th>Produto</th><th class="num">Custo pela nota</th><th>Última entrada</th>',
+      d.importacao.semCustoNoTinyComNota.map(x => '<tr><td><b>' + esc(x.sku) + '</b> <span class="muted">' + esc(x.descricao) + '</span></td><td class="num">' + fmtMoney(x.custoNota) + '</td><td>' + esc(x.ultimaEntrada) + '</td></tr>'));
+  }
+
+  h += sec('Preço de custo e custo médio diferentes no Tiny', 'Um dos dois está velho ou foi digitado errado. A margem usa o preço de custo.');
+  h += tabela('<th>Produto</th><th class="num">Preço de custo</th><th class="num">Custo médio</th><th class="num">Diferença</th><th class="num">Líquido ' + d.janelaDias + 'd</th>',
+    d.divergenciasTiny.map(x => '<tr><td><b>' + esc(x.sku) + '</b> <span class="muted">' + esc(x.descricao) + '</span></td><td class="num">' + fmtMoney(x.custoPreco) + '</td><td class="num">' + fmtMoney(x.custoMedio) + '</td><td class="num">' + (x.diferencaPct > 0 ? '+' : '') + fmtPct(x.diferencaPct) + '</td><td class="num">' + fmtMoney(x.liquido) + '</td></tr>'));
+
+  if (d.kitsSemCusto.length) {
+    h += sec('Kits sem custo no Tiny', 'Kit precisa de custo próprio ou da composição cadastrada no Tiny.');
+    h += tabela('<th>Kit</th><th class="num">Líquido ' + d.janelaDias + 'd</th>', d.kitsSemCusto.map(x => '<tr><td><b>' + esc(x.sku) + '</b> <span class="muted">' + esc(x.descricao) + '</span></td><td class="num">' + fmtMoney(x.liquido) + '</td></tr>'));
+  }
+  h += '<div class="muted" style="margin-top:16px">A lista completa de anúncios sem custo, sem SKU ou com SKU fora do Tiny continua em <a href="/debug/lacunas.csv" onclick="this.href=\'/debug/lacunas.csv?key=\'+encodeURIComponent(apiKey())">lacunas-cadastro.csv</a>.</div>';
+  el.innerHTML = h;
+}
 
 async function carregarAcompanhamento() {
   try { acomp = await api('/api/promocoes/acompanhamento'); }

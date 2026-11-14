@@ -50,6 +50,7 @@ export async function refreshMargem(maxAnuncios = 500, dias = 30): Promise<Resul
       custo,
       liquido,
       unidades: v?.unidades ?? 0,
+      bruto: v ? Math.round(v.bruto * 100) / 100 : 0,
     });
   }
 

@@ -3,6 +3,7 @@ import { getListingRatings } from '../core/listingRatings';
 import { getCatalogCompetition } from '../core/catalogCompetition';
 import { calcularReposicao } from '../core/replenishmentScan';
 import { getMargem, refreshMargem } from '../core/margemScan';
+import { obterDiagnostico } from '../core/diagnosticoCustos';
 import { margemDaVenda, ACAO_POR_ESTADO } from '../core/margem';
 import { serieDoAnuncio, vendasPorDia, variacao } from '../core/history';
 import { consultar, descreverEsquema } from '../db/banco';
@@ -102,6 +103,15 @@ export const FERRAMENTAS: DefinicaoDeFerramenta[] = [
       'Onde a margem nao pode ser calculada e por que: anuncio sem SKU, SKU que nao existe no Tiny, ou produto ' +
       'sem custo cadastrado. Ordenado por faturamento preso em cada lacuna. Use quando perguntarem por que ' +
       'a margem de algo esta faltando, ou o que preencher primeiro.',
+    input_schema: { type: 'object', properties: { limite: { type: 'integer' } } },
+  },
+  {
+    name: 'diagnostico_de_custos',
+    description:
+      'Diagnostico de custos dos produtos: quanto do faturamento tem custo confiavel, o imposto que saiu de fato ' +
+      'nas notas de venda (lido do backup das NF-e), produtos com custo do Tiny longe da nota de importacao, ' +
+      'preco de custo x custo medio divergentes, kits sem custo e os 30 produtos que mais faturam com custo, ' +
+      'imposto e margem. Use para perguntas sobre custo, imposto, margem real ou se da para confiar na margem.',
     input_schema: { type: 'object', properties: { limite: { type: 'integer' } } },
   },
   {
@@ -360,6 +370,18 @@ export async function executarFerramenta(nome: string, entrada: any): Promise<un
           itemId: a.itemId, titulo: a.titulo, sku: a.sku, estado: a.estado,
           liquidoPreso: a.liquido, acao: ACAO_POR_ESTADO[a.estado],
         })),
+      };
+    }
+
+    case 'diagnostico_de_custos': {
+      const d = await obterDiagnostico();
+      const limite = limitar(entrada?.limite, 15, 30);
+      return {
+        ...d,
+        top: d.top.slice(0, limite),
+        divergenciasTiny: d.divergenciasTiny.slice(0, limite),
+        kitsSemCusto: d.kitsSemCusto.slice(0, limite),
+        importacao: { ...d.importacao, divergentes: d.importacao.divergentes.slice(0, limite), semCustoNoTinyComNota: d.importacao.semCustoNoTinyComNota.slice(0, limite) },
       };
     }
 
