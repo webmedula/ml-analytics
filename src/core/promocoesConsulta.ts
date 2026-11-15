@@ -1,4 +1,5 @@
 import { getPromocoes, LinhaPromocao, participa, PromocoesResult } from './promocoes';
+import { comLucro, getFichas, type Fichas, type LucroDaPromocao } from './lucro';
 
 /**
  * Consulta das propostas de promocao, usada pela ferramenta `promocoes_do_ml` (Gerente no
@@ -16,7 +17,7 @@ function dataCurta(iso: string | null): string | null {
 }
 
 /** Uma linha legivel por proposta — vai direto pro Telegram no aviso diario. */
-export function linhaEmTexto(l: LinhaPromocao): string {
+export function linhaEmTexto(l: LinhaPromocao & Partial<LucroDaPromocao>): string {
   const titulo = (l.titulo ?? l.itemId).slice(0, 60);
   const periodo = [dataCurta(l.inicio), dataCurta(l.fim)].filter(Boolean).join(' a ');
   const partes = [
@@ -33,6 +34,12 @@ export function linhaEmTexto(l: LinhaPromocao): string {
         (dif != null ? `, ${dif >= 0 ? '+' : ''}${brl(dif)} por venda)` : ')'),
     );
   }
+  // v51: lucro por venda pela ficha do produto (custo do Tiny + imposto real das notas)
+  if (l.lucroPorVenda != null) {
+    partes.push(`  ${l.lucroPorVenda < 0 ? '⚠️ PREJUÍZO' : 'Lucro'} ~${brl(l.lucroPorVenda)} por venda` + (l.lucroHoje != null ? ` (hoje ${brl(l.lucroHoje)})` : ''));
+  } else if (l.lucroAntesDoImposto != null) {
+    partes.push(`  ${l.lucroAntesDoImposto < 0 ? '⚠️ PREJUÍZO' : 'Lucro'} antes do imposto ~${brl(l.lucroAntesDoImposto)} por venda`);
+  }
   return partes.join('\n');
 }
 
@@ -44,9 +51,11 @@ export interface FiltroPromocoes {
   apenas_ml_banca?: boolean;
   busca?: string;
   limite?: number;
+  /** v51: so as que dao prejuizo (lucro por venda abaixo de zero) */
+  apenas_prejuizo?: boolean;
 }
 
-export function filtrarPromocoes(f: FiltroPromocoes, r: PromocoesResult | null = getPromocoes(), agora = Date.now()) {
+export function filtrarPromocoes(f: FiltroPromocoes, r: PromocoesResult | null = getPromocoes(), agora = Date.now(), fichas: Fichas | null = getFichas()) {
   if (!r) return { disponivel: false, mensagem: 'A varredura de promocoes ainda nao rodou (roda ~2 min depois de subir e a cada 6h).' };
   if (!r.apiDisponivel) return { disponivel: false, mensagem: r.avisoDaApi, atualizadoEm: r.atualizadoEm };
 
@@ -57,14 +66,15 @@ export function filtrarPromocoes(f: FiltroPromocoes, r: PromocoesResult | null =
   const tipo = f.tipo ? String(f.tipo).toUpperCase() : null;
   const busca = f.busca ? String(f.busca).trim().toUpperCase() : null;
 
-  const itens = r.itens.filter(
+  const itens = comLucro(r.itens, fichas).filter(
     (l) =>
       (situacao === 'todas' || !l.semEfeito) &&
       (situacao === 'todas' || (situacao === 'participando' ? participa(l.situacao) : l.situacao === situacao)) &&
       (!f.apenas_novas || Date.parse(l.vistaPrimeiroEm) >= desde) &&
       (!tipo || l.tipo === tipo) &&
       (!f.apenas_ml_banca || l.mlBanca > 0) &&
-      (!busca || l.itemId.toUpperCase() === busca || (l.titulo ?? '').toUpperCase().includes(busca)),
+      (!busca || l.itemId.toUpperCase() === busca || (l.titulo ?? '').toUpperCase().includes(busca)) &&
+      (!f.apenas_prejuizo || l.daPrejuizo === true),
   );
 
   const porTipo: Record<string, number> = {};
@@ -81,12 +91,15 @@ export function filtrarPromocoes(f: FiltroPromocoes, r: PromocoesResult | null =
     porTipo,
     observacao:
       'Comparado com o que ja recebe hoje (inclui a parte do ML na promocao ativa); propostas acima do preco de hoje ficam de fora (o ML aplica o menor preco). voceRecebe = preco + parte do ML - tarifa - frete gratis (os dois pelo calculo do ML; sem frete gratis, frete medio de 30 dias). Ordenado pelas que menos ' +
-      'tiram de cada venda. Aderir continua sendo pela tela do ML.',
+      'tiram de cada venda. lucroPorVenda = voceRecebe - custo do produto (Tiny) - imposto (% real das notas de venda); null = falta custo ou imposto; daPrejuizo = lucro abaixo de zero. Aderir continua sendo pela tela do ML.',
+    lucro: { disponivel: !!fichas, imposto: fichas?.imposto ?? null, comPrejuizo: itens.filter((l) => l.daPrejuizo === true).length },
     itens: mostrados.map((l) => ({
       itemId: l.itemId, titulo: l.titulo, tipo: l.tipo, rotulo: l.rotulo, nome: l.nome, situacao: l.situacao,
       precoCheio: l.precoCheio, precoAtual: l.precoAtual, precoProposto: l.precoProposto, faixa: l.precoMinimo || l.precoMaximo ? [l.precoMinimo, l.precoMaximo] : undefined,
       descontoPercentual: l.descontoPercentual, mlBanca: l.mlBanca, voceRecebe: l.voceRecebe, voceRecebeHoje: l.voceRecebeHoje,
-      diferencaPorVenda: l.diferencaPorVenda, inicio: l.inicio, fim: l.fim, prazoParaAderir: l.prazoParaAderir, vistaPrimeiroEm: l.vistaPrimeiroEm,
+      diferencaPorVenda: l.diferencaPorVenda,
+      custoUnitario: l.custoUnitario, impostoPct: l.impostoPct, lucroPorVenda: l.lucroPorVenda, lucroAntesDoImposto: l.lucroAntesDoImposto, lucroHoje: l.lucroHoje, daPrejuizo: l.daPrejuizo,
+      inicio: l.inicio, fim: l.fim, prazoParaAderir: l.prazoParaAderir, vistaPrimeiroEm: l.vistaPrimeiroEm,
     })),
     /** Texto pronto (Telegram). O aviso diario do Gerente envia isto sem passar pela IA. */
     resumoEmTexto: itens.length

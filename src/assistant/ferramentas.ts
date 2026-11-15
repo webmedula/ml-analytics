@@ -155,7 +155,7 @@ export const FERRAMENTAS: DefinicaoDeFerramenta[] = [
       'Propostas de promocao que o Mercado Livre oferece para os anuncios (oferta relampago, campanhas como 11.11, ' +
       'co-participacao em que o ML banca parte do desconto / reduz a tarifa). Para cada uma: preco proposto, desconto, ' +
       'quanto o ML banca, e uma ESTIMATIVA de quanto voce recebe por venda comparado ao preco de hoje (diferencaPorVenda ' +
-      'negativa = abre mao desse valor por venda). apenas_novas=true traz so as que apareceram nas ultimas horas (padrao 24). ' +
+      'negativa = abre mao desse valor por venda) e o LUCRO por venda depois do custo do produto e do imposto (lucroPorVenda; daPrejuizo=true quando fica negativo — avise antes de sugerir aderir). apenas_prejuizo=true traz so as que dao prejuizo. apenas_novas=true traz so as que apareceram nas ultimas horas (padrao 24). ' +
       'situacao: proposta (padrao, ainda nao aderiu), ativa (define o preco agora), programada (aderiu, ainda nao vale), participando (ativa ou programada) ou todas. Somente leitura: nao adere a nada.',
     input_schema: {
       type: 'object',
@@ -167,6 +167,7 @@ export const FERRAMENTAS: DefinicaoDeFerramenta[] = [
         apenas_ml_banca: { type: 'boolean', description: 'so as propostas em que o ML banca parte do desconto' },
         busca: { type: 'string', description: 'MLB ou parte do titulo' },
         limite: { type: 'integer', description: '1 a 30, padrao 10' },
+        apenas_prejuizo: { type: 'boolean', description: 'so as propostas que dao prejuizo por venda' },
       },
     },
   },
