@@ -10,6 +10,7 @@ import { lacunasParaCsv, margemDaVenda } from '../core/margem';
 import { montarFila, resumirFila } from '../core/filaRecriacao';
 import { getMargem, refreshMargem } from '../core/margemScan';
 import { obterDiagnostico } from '../core/diagnosticoCustos';
+import { obterPlano, parametrosDaQuery } from '../core/compras';
 import { montarIndice, sugerirCorrespondencia } from '../core/skuMatch';
 import { lerPaginacao, procurarSkuNoTiny } from '../tiny/tinyClient';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
@@ -267,6 +268,16 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao montar o diagnostico de custos' };
     }
+  });
+
+  /**
+   * v51: planejamento de compras por produto (todos os canais): estoque do Tiny, vendas das notas do
+   * backup, prazo de importacao. ?prazo=&cobertura=&seguranca=&excesso= em dias; ?refresh=1 recoleta.
+   * So leitura. Nao depende do login do ML.
+   */
+  app.get('/api/compras', async (req) => {
+    const q = req.query as Record<string, unknown>;
+    return obterPlano(parametrosDaQuery(q), q.refresh === '1');
   });
 
   /** Margem + lacunas de cadastro, por anuncio. Serve o cache; ?refresh=1 força a varredura. */

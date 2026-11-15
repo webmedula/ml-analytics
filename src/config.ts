@@ -11,7 +11,7 @@ function inteiroPositivo(v: string | undefined, padrao: number): number {
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v50 (2026-11-14)',
+  appVersion: 'analytics v51 (2026-11-15)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -79,6 +79,23 @@ export const config = {
    * importacao, a partir da qual o diagnostico aponta o produto. */
   custoDivergenciaPct: Number(process.env.CUSTO_DIVERGENCIA_PCT || 15),
 
+  // --- v51: planejamento de compras (importacao) ---
+  /** Dias entre fazer o pedido na China e a mercadoria estar disponivel para vender. */
+  comprasPrazoDias: Number(process.env.COMPRAS_PRAZO_DIAS || 90),
+  /** Quantos dias de venda cada pedido deve cobrir depois que chega. */
+  comprasCoberturaDias: Number(process.env.COMPRAS_COBERTURA_DIAS || 90),
+  /** Folga para atraso de navio, alfandega ou pico de venda. */
+  comprasSegurancaDias: Number(process.env.COMPRAS_SEGURANCA_DIAS || 30),
+  /** Acima de quantos dias de estoque o produto conta como excesso (dinheiro empatado). */
+  comprasExcessoDias: Number(process.env.COMPRAS_EXCESSO_DIAS || 365),
+  /** Meses completos de venda considerados, alem do mes corrente. */
+  comprasMesesCompletos: Number(process.env.COMPRAS_MESES || 3),
+  comprasValidadeHoras: Number(process.env.COMPRAS_VALIDADE_HORAS || 24),
+  comprasMaxProdutos: Number(process.env.COMPRAS_MAX_PRODUTOS || 5000),
+  comprasMaxEstoques: Number(process.env.COMPRAS_MAX_ESTOQUES || 3000),
+  /** Pausa entre chamadas ao Tiny na coleta (o estoque e lido produto a produto). */
+  comprasPausaTinyMs: Number(process.env.COMPRAS_PAUSA_TINY_MS || 700),
+
   // --- assistente (Telegram) ---
   /** 'anthropic' | 'openrouter'. Vazio = usa a chave que estiver configurada. */
   assistenteProvedor: process.env.ASSISTENTE_PROVEDOR || '',
@@ -133,4 +150,5 @@ export const config = {
   historyDir: path.join(dataDir, 'history'),
   tinyTokenStorePath: path.join(dataDir, 'tiny-token.json'),
   custosCachePath: path.join(dataDir, 'custos.json'),
+  comprasCachePath: path.join(dataDir, 'compras.json'),
 };

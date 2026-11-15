@@ -65,6 +65,8 @@ export function extrairProdutos(resposta: any): any[] {
  * `custo` fica null quando nao ha valor utilizavel — melhor ausente que zero fingindo ser custo.
  */
 export interface ProdutoNormalizado {
+  /** v51: id do produto no Tiny (para ler estoque e estrutura de kit). */
+  id?: string | null;
   sku: string | null;
   descricao: string | null;
   /** Custo usado na margem: preco de custo; se vazio, custo medio. */
@@ -74,6 +76,8 @@ export interface ProdutoNormalizado {
   custoMedio?: number | null;
   /** v50: tipo do produto no Tiny (S simples, K kit, V com variacoes, F fabricado, M materia-prima), quando vier. */
   tipo?: string | null;
+  /** v51: situacao no Tiny (A ativo, I inativo, E excluido), quando vier. */
+  situacao?: string | null;
 }
 
 /** Numero positivo ou null (aceita "15,90"). */
@@ -106,13 +110,18 @@ export function normalizarProduto(bruto: any): ProdutoNormalizado {
   const custoMedio = [p.precoCustoMedio, p.preco_custo_medio, precos.precoCustoMedio, precos.preco_custo_medio].map(positivo).find((v) => v != null) ?? null;
   const tipo = typeof p.tipo === 'string' && p.tipo.trim() ? p.tipo.trim().toUpperCase() : null;
 
+  const id = p.id ?? p.idProduto ?? null;
+  const situacao = typeof p.situacao === 'string' && p.situacao.trim() ? p.situacao.trim().toUpperCase() : null;
+
   return {
+    id: id != null && String(id).trim() ? String(id).trim() : null,
     sku: sku ? String(sku).trim() : null,
     descricao: p.descricao ?? p.nome ?? null,
     custo,
     custoPreco,
     custoMedio,
     tipo,
+    situacao,
   };
 }
 
@@ -199,6 +208,50 @@ export async function procurarSkuNoTiny(sku: string): Promise<{
   }
 
   return { sku, encontrado: false, encontradoPor: null, custo: null, tentativas };
+}
+
+/** v51: estoque de um produto (todos os depositos somados). null quando o Tiny nao traz numero. */
+export interface EstoqueTiny {
+  saldo: number;
+  reservado: number;
+  disponivel: number;
+}
+
+/** Le o estoque do formato do Tiny v3 (`/estoque/{id}`), tolerando nomes alternativos. */
+export function normalizarEstoque(bruto: any): EstoqueTiny | null {
+  const e = bruto?.estoque ?? bruto?.produto ?? bruto ?? {};
+  const n = (v: unknown): number | null => {
+    const x = typeof v === 'string' ? Number(v.replace(',', '.')) : Number(v);
+    return v != null && v !== '' && Number.isFinite(x) ? x : null;
+  };
+  let saldo = n(e.saldo) ?? n(e.saldoFisico) ?? n(e.quantidade);
+  if (saldo == null && Array.isArray(e.depositos)) {
+    const ds = e.depositos.filter((d: any) => d && d.desconsiderar !== true && d.desconsiderar !== 'S');
+    if (ds.length) saldo = ds.reduce((a: number, d: any) => a + (n(d.saldo) ?? 0), 0);
+  }
+  if (saldo == null) return null;
+  const reservado = n(e.reservado) ?? 0;
+  const disponivel = n(e.disponivel) ?? saldo - reservado;
+  return { saldo, reservado, disponivel };
+}
+
+export async function lerEstoque(id: string | number): Promise<EstoqueTiny | null> {
+  return normalizarEstoque(await tinyRequest<any>(`/estoque/${encodeURIComponent(String(id))}`));
+}
+
+/** v51: componentes de um kit (sku + quantidade por kit), lidos do detalhe do produto. Vazio se nao achar. */
+export function extrairComponentesDoKit(detalhe: any): Array<{ sku: string; quantidade: number }> {
+  const p = detalhe?.produto ?? detalhe ?? {};
+  const lista = [p.kit, p.itensKit, p.estrutura, p.composicao, p.componentes].find((v) => Array.isArray(v)) as any[] | undefined;
+  if (!lista) return [];
+  const out: Array<{ sku: string; quantidade: number }> = [];
+  for (const it of lista) {
+    const c = it?.produto ?? it?.item ?? it ?? {};
+    const sku = String(c.sku ?? c.codigo ?? it?.sku ?? it?.codigo ?? '').trim();
+    const q = Number(String(it?.quantidade ?? c.quantidade ?? 1).replace(',', '.'));
+    if (sku && Number.isFinite(q) && q > 0) out.push({ sku, quantidade: q });
+  }
+  return out;
 }
 
 /** Detalhe de um produto. A LISTA do Tiny e resumida; o custo pode existir so aqui. */
