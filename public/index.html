@@ -110,6 +110,7 @@
     <button class="tab" data-aba="promocoes" onclick="setAba('promocoes')">Promoções</button>
     <button class="tab" data-aba="acompanhamento" onclick="setAba('acompanhamento')">Acompanhamento</button>
     <button class="tab" data-aba="custos" onclick="setAba('custos')">Custos</button>
+    <button class="tab" data-aba="compras" onclick="setAba('compras')">Compras</button>
   </div>
 
   <section class="panel" id="keyPanel" style="display:none">
@@ -185,6 +186,20 @@
     </div>
     <div id="custosBody"><div class="muted">Abra a aba para montar o diagnóstico.</div></div>
   </section>
+
+  <section class="panel aba-compras" style="display:none">
+    <div class="detail-head">
+      <h2 style="margin:0">Planejamento de compras</h2>
+      <div class="row">
+        <label class="muted">Prazo da importação <input class="mini" id="cmpPrazo" type="number" min="0" max="365"> dias</label>
+        <label class="muted">Cada pedido cobre <input class="mini" id="cmpCobertura" type="number" min="0" max="730"> dias</label>
+        <label class="muted">Folga <input class="mini" id="cmpSeguranca" type="number" min="0" max="180"> dias</label>
+        <button class="secondary" onclick="carregarCompras(false)">Recalcular</button>
+        <button class="secondary" onclick="carregarCompras(true)">Refazer agora</button>
+      </div>
+    </div>
+    <div id="comprasBody"><div class="muted">Abra a aba para montar o planejamento.</div></div>
+  </section>
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -236,11 +251,13 @@ function setAba(nova) {
   document.querySelector('.aba-promocoes').style.display = nova === 'promocoes' ? '' : 'none';
   document.querySelector('.aba-acompanhamento').style.display = nova === 'acompanhamento' ? '' : 'none';
   document.querySelector('.aba-custos').style.display = nova === 'custos' ? '' : 'none';
+  document.querySelector('.aba-compras').style.display = nova === 'compras' ? '' : 'none';
   if (nova === 'desempenho') renderDesempenho();
   if (nova === 'reposicao') renderReposicao();
   if (nova === 'promocoes') carregarPromocoes();
   if (nova === 'acompanhamento') carregarAcompanhamento();
   if (nova === 'custos') carregarCustos(false);
+  if (nova === 'compras') carregarCompras(false);
 }
 
 /** Variação percentual, com o mesmo cuidado do backend: sair do zero não vira "+infinito%". */
@@ -776,6 +793,87 @@ function renderCustos() {
     h += tabela('<th>Kit</th><th class="num">Líquido ' + d.janelaDias + 'd</th>', d.kitsSemCusto.map(x => '<tr><td><b>' + esc(x.sku) + '</b> <span class="muted">' + esc(x.descricao) + '</span></td><td class="num">' + fmtMoney(x.liquido) + '</td></tr>'));
   }
   h += '<div class="muted" style="margin-top:16px">A lista completa de anúncios sem custo, sem SKU ou com SKU fora do Tiny continua em <a href="/debug/lacunas.csv" onclick="this.href=\'/debug/lacunas.csv?key=\'+encodeURIComponent(apiKey())">lacunas-cadastro.csv</a>.</div>';
+  el.innerHTML = h;
+}
+
+// --- v51: planejamento de compras (/api/compras) ---
+let compras = null, comprasFiltro = 'comprar', comprasTimer = null;
+const CMP_CAMPOS = { cmpPrazo: 'prazo', cmpCobertura: 'cobertura', cmpSeguranca: 'seguranca' };
+const CMP_ROTULO = {
+  em_falta: ['Em falta', 'perdendo'], pedir_ja: ['Pedir já', 'perdendo'], pedir_em_breve: ['Pedir em breve', 'empatado'],
+  ok: ['Em dia', 'ganhando'], excesso: ['Excesso', 'empatado'], parado: ['Parado', 'empatado'], sem_estoque_lido: ['Sem estoque lido', 'indefinido'],
+};
+function cmpGuardado(k) { try { return localStorage.getItem('compras_' + k); } catch { return null; } }
+function cmpGuardar(k, v) { try { localStorage.setItem('compras_' + k, v); } catch {} }
+async function carregarCompras(forcar) {
+  const el = document.getElementById('comprasBody');
+  const qs = new URLSearchParams();
+  for (const [id, k] of Object.entries(CMP_CAMPOS)) {
+    const inp = document.getElementById(id);
+    if (inp.value === '' && cmpGuardado(k) != null) inp.value = cmpGuardado(k);
+    if (inp.value !== '') { qs.set(k, inp.value); cmpGuardar(k, inp.value); }
+  }
+  if (forcar) qs.set('refresh', '1');
+  if (!compras) el.innerHTML = '<div class="muted">Montando...</div>';
+  let r;
+  try { r = await api('/api/compras?' + qs.toString()); }
+  catch (e) { el.innerHTML = '<div class="insight bad">Não consegui montar o planejamento: ' + esc(e.message) + '</div>'; return; }
+  clearTimeout(comprasTimer);
+  if (r.coleta && r.coleta.rodando && aba === 'compras') comprasTimer = setTimeout(() => carregarCompras(false), 20000);
+  if (!r.pronto) { el.innerHTML = '<div class="insight' + (r.coleta && r.coleta.erro ? ' bad' : '') + '">' + esc(r.mensagem) + '</div>'; return; }
+  compras = r;
+  const p = r.plano.parametros;
+  if (document.getElementById('cmpPrazo').value === '') document.getElementById('cmpPrazo').value = p.prazoDias;
+  if (document.getElementById('cmpCobertura').value === '') document.getElementById('cmpCobertura').value = p.coberturaDias;
+  if (document.getElementById('cmpSeguranca').value === '') document.getElementById('cmpSeguranca').value = p.segurancaDias;
+  renderCompras();
+}
+function setComprasFiltro(f) { comprasFiltro = f; renderCompras(); }
+function fmtDiaCmp(d) { return d ? d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(2, 4) : '—'; }
+function fmtUn(n) { return n == null ? '—' : String(Math.round(n * 10) / 10).replace('.', ','); }
+function renderCompras() {
+  const el = document.getElementById('comprasBody');
+  const r = compras; if (!r) return;
+  const d = r.plano, s = d.resumo.porSituacao, p = d.parametros;
+  const nomeMes = m => ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][Number(m.slice(5, 7)) - 1];
+  const comprar = s.em_falta + s.pedir_ja + s.pedir_em_breve;
+  const filtros = {
+    comprar: l => l.quantidadeSugerida > 0,
+    parado: l => l.situacao === 'parado' || l.situacao === 'excesso',
+    todos: () => true,
+  };
+  const linhas = d.linhas.filter(filtros[comprasFiltro] || filtros.todos);
+  const kpi = (f, t, v, cls, sub) => '<div class="kpi' + (comprasFiltro === f ? ' active' : '') + '" onclick="setComprasFiltro(\'' + f + '\')"><div class="t">' + t + '</div><div class="v ' + cls + '">' + v + '</div><div class="sub">' + sub + '</div></div>';
+  let h = '<div class="muted">Dados de ' + esc(fmtHora(d.atualizadoEm)) + ' · vendas de ' + d.diasAnalisados + ' dias em todas as lojas (notas fiscais do backup) · estoque do Tiny' +
+    (r.coleta && r.coleta.rodando ? ' · <b>atualizando: ' + esc(r.coleta.etapa || '') + '</b>' : '') + '</div>';
+  h += '<div class="cards" style="margin-top:12px">' +
+    kpi('comprar', 'Precisa entrar no próximo pedido', comprar, comprar ? 'bad' : 'ok', s.em_falta + ' em falta · ' + s.pedir_ja + ' pedir já · ' + s.pedir_em_breve + ' em breve') +
+    '<div class="kpi disabled"><div class="t">Investimento sugerido</div><div class="v">' + fmtMoney(d.resumo.investimentoSugerido) + '</div><div class="sub">pelo custo do Tiny' + (d.resumo.produtosSemCustoNaCompra ? ' · ' + d.resumo.produtosSemCustoNaCompra + ' sem custo' : '') + '</div></div>' +
+    kpi('parado', 'Dinheiro parado', fmtMoney(d.resumo.valorParado), d.resumo.valorParado > 0 ? 'warn' : 'ok', s.parado + ' sem venda · ' + s.excesso + ' com mais de ' + p.excessoDias + ' dias') +
+    kpi('todos', 'Estoque total (custo)', fmtMoney(d.resumo.valorEmEstoque), '', d.linhas.length + ' produtos') +
+    '</div>';
+  h += '<div class="insight" style="margin-top:14px"><div>Um produto entra em <b>Pedir já</b> quando o estoque acaba antes de uma importação feita hoje chegar (' + p.prazoDias + ' dias), e em <b>Pedir em breve</b> quando sobra menos de ' + p.segurancaDias + ' dias de folga. A quantidade sugerida cobre o prazo, a folga e mais ' + p.coberturaDias + ' dias de venda depois que chega. Kits contam nos componentes.</div></div>';
+  for (const a of d.avisos) h += '<div class="insight warn" style="margin-top:10px">' + esc(a) + '</div>';
+  const cabMeses = d.meses.map(m => '<th class="num" title="' + m.notasLidas + ' notas lidas">' + nomeMes(m.mes) + (m.dias < 28 ? '*' : '') + '</th>').join('');
+  const trend = t => t === 'subindo' ? ' <span title="vendendo mais">▲</span>' : t === 'caindo' ? ' <span title="vendendo menos">▼</span>' : '';
+  const rows = linhas.map(l => {
+    const [rot, cls] = CMP_ROTULO[l.situacao] || [l.situacao, ''];
+    return '<tr><td><span class="tag ' + cls + '">' + rot + '</span></td>' +
+      '<td class="title-cell" title="' + esc(l.descricao) + '"><b>' + esc(l.sku) + '</b> <span class="muted">' + esc(l.descricao) + (l.viaKit ? ' · ' + fmtUn(l.viaKit) + ' via kit' : '') + '</span></td>' +
+      l.vendasPorMes.map(q => '<td class="num">' + fmtUn(q) + '</td>').join('') +
+      '<td class="num">' + fmtUn(l.vendasPorMesMedia) + trend(l.tendencia) + '</td>' +
+      '<td class="num">' + fmtUn(l.estoque) + '</td>' +
+      '<td class="num">' + (l.diasDeEstoque == null ? '—' : l.diasDeEstoque) + '</td>' +
+      '<td>' + fmtDiaCmp(l.acabaEm) + '</td>' +
+      '<td>' + (l.quantidadeSugerida > 0 ? '<b>' + fmtDiaCmp(l.pedirAte) + '</b>' : '—') + '</td>' +
+      '<td class="num">' + (l.quantidadeSugerida > 0 ? '<b>' + l.quantidadeSugerida + '</b>' : '—') + '</td>' +
+      '<td class="num">' + (l.quantidadeSugerida > 0 ? fmtMoney(l.investimento) : (l.valorParado ? '<span class="muted">parado ' + fmtMoney(l.valorParado) + '</span>' : '—')) + '</td>' +
+      '<td>' + fmtDiaCmp(l.ultimaImportacao) + '</td></tr>';
+  }).join('');
+  h += linhas.length
+    ? '<div class="table-scroll"><table><thead><tr><th>Situação</th><th>Produto</th>' + cabMeses + '<th class="num">Média/mês</th><th class="num">Estoque</th><th class="num">Dias</th><th>Acaba em</th><th>Pedir até</th><th class="num">Pedir</th><th class="num">Valor</th><th>Última import.</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    : '<div class="muted" style="margin-top:12px">Nada nesta lista.</div>';
+  h += '<div class="muted" style="margin-top:10px">* mês em andamento, contado até ontem. Estoque lido de ' + d.estoque.lidos + ' produtos no Tiny' + (d.estoque.erros ? ' (' + d.estoque.erros + ' com erro)' : '') + '.</div>';
   el.innerHTML = h;
 }
 

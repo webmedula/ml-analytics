@@ -318,12 +318,13 @@ export function montarDiagnostico(
 
 // ---------- leitura do backup ----------
 
-export async function buscarImpostosDoBackup(): Promise<ImpostosDoBackup> {
+export async function buscarImpostosDoBackup(periodo?: { de: string; ate: string }): Promise<ImpostosDoBackup> {
   if (!config.backupBaseUrl || !config.backupApiKey) {
     return { disponivel: false, calculando: false, motivo: 'defina BACKUP_BASE_URL e BACKUP_API_KEY (a PANEL_API_KEY do backup) para ler o imposto das notas.' };
   }
   try {
-    const res = await fetch(`${config.backupBaseUrl}/painel/api/impostos`, {
+    const qs = periodo ? `?de=${encodeURIComponent(periodo.de)}&ate=${encodeURIComponent(periodo.ate)}` : '';
+    const res = await fetch(`${config.backupBaseUrl}/painel/api/impostos${qs}`, {
       headers: { 'x-api-key': config.backupApiKey, Accept: 'application/json' },
       signal: AbortSignal.timeout(20_000),
     });

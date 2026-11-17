@@ -4,6 +4,7 @@ import { getCatalogCompetition } from '../core/catalogCompetition';
 import { calcularReposicao } from '../core/replenishmentScan';
 import { getMargem, refreshMargem } from '../core/margemScan';
 import { obterDiagnostico } from '../core/diagnosticoCustos';
+import { obterPlano, parametrosDaQuery } from '../core/compras';
 import { margemDaVenda, ACAO_POR_ESTADO } from '../core/margem';
 import { serieDoAnuncio, vendasPorDia, variacao } from '../core/history';
 import { consultar, descreverEsquema } from '../db/banco';
@@ -113,6 +114,25 @@ export const FERRAMENTAS: DefinicaoDeFerramenta[] = [
       'preco de custo x custo medio divergentes, kits sem custo e os 30 produtos que mais faturam com custo, ' +
       'imposto e margem. Use para perguntas sobre custo, imposto, margem real ou se da para confiar na margem.',
     input_schema: { type: 'object', properties: { limite: { type: 'integer' } } },
+  },
+  {
+    name: 'planejamento_de_compras',
+    description:
+      'Planejamento da proxima importacao, por produto (SKU), somando todas as lojas (ML, Shopee, TikTok): ' +
+      'estoque do Tiny, vendas por mes tiradas das notas fiscais do backup (kit conta nos componentes), dias ' +
+      'de estoque, data limite para pedir, quantidade sugerida, investimento e dinheiro parado em produto ' +
+      'sem giro. Use para perguntas sobre o que comprar, o que vai faltar, estoque parado ou excesso. ' +
+      'Prazo de importacao, cobertura e folga em dias podem ser trocados (padrao 90/90/30).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        situacao: { type: 'string', description: 'filtra: em_falta, pedir_ja, pedir_em_breve, ok, excesso, parado, sem_estoque_lido' },
+        prazo: { type: 'integer', description: 'dias do pedido na China ate poder vender' },
+        cobertura: { type: 'integer', description: 'dias de venda que o pedido deve cobrir' },
+        seguranca: { type: 'integer', description: 'dias de folga' },
+        limite: { type: 'integer' },
+      },
+    },
   },
   {
     name: 'esquema_do_banco',
@@ -384,6 +404,15 @@ export async function executarFerramenta(nome: string, entrada: any): Promise<un
         kitsSemCusto: d.kitsSemCusto.slice(0, limite),
         importacao: { ...d.importacao, divergentes: d.importacao.divergentes.slice(0, limite), semCustoNoTinyComNota: d.importacao.semCustoNoTinyComNota.slice(0, limite) },
       };
+    }
+
+    case 'planejamento_de_compras': {
+      const r = obterPlano(parametrosDaQuery(entrada ?? {}));
+      if (!r.pronto) return { disponivel: false, mensagem: r.mensagem };
+      const limite = limitar(entrada?.limite, 20, 60);
+      const filtro = typeof entrada?.situacao === 'string' ? entrada.situacao : null;
+      const linhas = r.plano.linhas.filter((l) => !filtro || l.situacao === filtro).slice(0, limite);
+      return { ...r.plano, linhas, totalDeLinhas: r.plano.linhas.length };
     }
 
     case 'historico_do_anuncio': {
