@@ -126,6 +126,32 @@ const pct = (n: number): string => `${String(n).replace('.', ',')}%`;
 /** Faturamento minimo do produto nas notas pra usar o % de imposto dele em vez do geral. */
 const MIN_VENDA_PARA_PCT_PROPRIO = 300;
 
+export interface TabelaDeImpostos {
+  simples: boolean;
+  pctGeral: number | null;
+  porSku: Map<string, ImpostoSkuBackup>;
+  /** % de imposto da venda de um SKU (chave normalizada): o do produto com venda suficiente, senao o geral. */
+  pctDoSku: (sku: string) => { pct: number | null; origem: 'produto' | 'geral' | null };
+}
+
+/**
+ * v51: a regra do % de imposto num lugar so (diagnostico, ficha de lucro, promocoes e Central usam a mesma).
+ * No Simples o imposto nao vem item a item na nota: devolve null em vez de inventar.
+ */
+export function tabelaDeImpostos(dados: RespostaImpostosBackup | null): TabelaDeImpostos {
+  const simples = !!dados?.regime.observacao;
+  const porSku = new Map<string, ImpostoSkuBackup>();
+  if (dados) for (const v of dados.vendas.porSku) { const k = chaveSku(v.sku); if (k) porSku.set(k, v); }
+  const pctGeral = dados && !simples ? dados.vendas.total.percentual : null;
+  const pctDoSku = (k: string): { pct: number | null; origem: 'produto' | 'geral' | null } => {
+    if (!dados || simples) return { pct: null, origem: null };
+    const v = porSku.get(k);
+    if (v && v.valorDaVenda >= MIN_VENDA_PARA_PCT_PROPRIO && v.percentual != null) return { pct: v.percentual, origem: 'produto' };
+    return pctGeral != null ? { pct: pctGeral, origem: 'geral' } : { pct: null, origem: null };
+  };
+  return { simples, pctGeral, porSku, pctDoSku };
+}
+
 /**
  * Monta o diagnostico. Funcao pura: recebe margem (ML + Tiny), catalogo do Tiny e impostos do backup.
  */
@@ -179,20 +205,11 @@ export function montarDiagnostico(
 
   // --- impostos e importacao (backup) ---
   const dados = impostos.disponivel ? impostos.dados : null;
-  const simples = !!dados?.regime.observacao;
-  const impostoSku = new Map<string, ImpostoSkuBackup>();
+  const tabela = tabelaDeImpostos(dados);
+  const { simples, pctGeral, pctDoSku } = tabela;
+  const impostoSku = tabela.porSku;
   const importSku = new Map<string, ImportacaoSkuBackup>();
-  if (dados) {
-    for (const v of dados.vendas.porSku) { const k = chaveSku(v.sku); if (k) impostoSku.set(k, v); }
-    for (const v of dados.importacoes.porSku) { const k = chaveSku(v.sku); if (k) importSku.set(k, v); }
-  }
-  const pctGeral = dados && !simples ? dados.vendas.total.percentual : null;
-  const pctDoSku = (k: string): { pct: number | null; origem: 'produto' | 'geral' | null } => {
-    if (!dados || simples) return { pct: null, origem: null };
-    const v = impostoSku.get(k);
-    if (v && v.valorDaVenda >= MIN_VENDA_PARA_PCT_PROPRIO && v.percentual != null) return { pct: v.percentual, origem: 'produto' };
-    return pctGeral != null ? { pct: pctGeral, origem: 'geral' } : { pct: null, origem: null };
-  };
+  if (dados) for (const v of dados.importacoes.porSku) { const k = chaveSku(v.sku); if (k) importSku.set(k, v); }
 
   let conferidos = 0;
   const divergentes: DiagnosticoCustos['importacao']['divergentes'] = [];
@@ -322,6 +339,17 @@ export async function buscarImpostosDoBackup(periodo?: { de: string; ate: string
   }
 }
 
+let impostosCache: { em: number; valor: ImpostosDoBackup } | null = null;
+
+/** Impostos do backup com cache: 6 h quando vieram; 5 min enquanto o backup ainda soma ou falhou. */
+export async function impostosComCache(forcar = false): Promise<ImpostosDoBackup> {
+  const validade = impostosCache?.valor.disponivel ? 6 * 3600_000 : 5 * 60_000;
+  if (!forcar && impostosCache && Date.now() - impostosCache.em < validade) return impostosCache.valor;
+  const valor = await buscarImpostosDoBackup();
+  impostosCache = { em: Date.now(), valor };
+  return valor;
+}
+
 // ---------- cache e orquestracao ----------
 
 let cache: DiagnosticoCustos | null = null;
@@ -337,7 +365,7 @@ export async function refreshDiagnostico(): Promise<DiagnosticoCustos> {
   const atual = getMargem();
   const idadeH = atual ? (Date.now() - new Date(atual.atualizadoEm).getTime()) / 3_600_000 : Infinity;
   const margem = atual && idadeH < 6 ? atual : await refreshMargem();
-  const [produtos, impostos] = await Promise.all([listarProdutos(5000), buscarImpostosDoBackup()]);
+  const [produtos, impostos] = await Promise.all([listarProdutos(5000), impostosComCache(true)]);
   entradas = { margem, produtos };
   cache = montarDiagnostico(margem, produtos, impostos, { divergenciaPct: config.custoDivergenciaPct });
   logger.info(`[CUSTOS] diagnostico: ${cache.cobertura.coberturaPorFaturamento}% do faturamento com custo; impostos ${cache.impostos.disponivel ? 'ok' : 'indisponivel'}.`);
@@ -351,7 +379,7 @@ export async function refreshDiagnostico(): Promise<DiagnosticoCustos> {
 export async function obterDiagnostico(forcar = false): Promise<DiagnosticoCustos> {
   if (forcar || !cache || !entradas) return refreshDiagnostico();
   if (cache.impostos.calculando) {
-    const impostos = await buscarImpostosDoBackup();
+    const impostos = await impostosComCache(true);
     cache = montarDiagnostico(entradas.margem, entradas.produtos, impostos, { divergenciaPct: config.custoDivergenciaPct });
   }
   return cache;

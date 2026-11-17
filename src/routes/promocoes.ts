@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import { getItemPromotionsRaw, getSalePriceRaw, getSellerPromotionsRaw, sondarCustosDaVenda, sondarDetalheDaOferta } from '../ml/mlClient';
 import { getPromocoes, refreshPromocoes } from '../core/promocoes';
+import { comLucro, getFichas } from '../core/lucro';
 import { logger } from '../logger';
 import { bancoDisponivel, ultimasFotosDoAnuncio } from '../db/banco';
 import { obterAcompanhamento } from '../core/promocoesAcompanhamentoConsulta';
@@ -18,16 +19,18 @@ export async function promocoesRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/promocoes', async (req, reply) => {
     const refresh = (req.query as { refresh?: string } | undefined)?.refresh === '1';
     const atual = getPromocoes();
-    if (atual && !refresh) {
-      const { vistas: _v, ...resto } = atual;
-      return resto;
-    }
+    // v51: cada linha leva o lucro por venda (custo + imposto da ficha do produto).
+    const comFicha = (r: NonNullable<ReturnType<typeof getPromocoes>>) => {
+      const { vistas: _v, ...resto } = r;
+      const fichas = getFichas();
+      return { ...resto, itens: comLucro(resto.itens, fichas), lucro: { disponivel: !!fichas, atualizadoEm: fichas?.atualizadoEm ?? null, imposto: fichas?.imposto ?? null } };
+    };
+    if (atual && !refresh) return comFicha(atual);
     if (!getMlAuthStatus().authenticated) {
       reply.code(409);
       return { mensagem: 'Mercado Livre nao autorizado.' };
     }
-    const { vistas: _v, ...resto } = await refreshPromocoes();
-    return resto;
+    return comFicha(await refreshPromocoes());
   });
 
   app.post('/api/promocoes/refresh', async (_req, reply) => {

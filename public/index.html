@@ -1053,6 +1053,7 @@ function renderPromocoes() {
     relampago:  { t: '⚡ Relâmpago', item: r => r.ls.some(ehRelampago), linha: l => l.situacao === 'ativa' || ehRelampago(l) },
     programada: { t: 'Programadas', item: r => r.ls.some(l => l.situacao === 'programada'), linha: l => l.situacao !== 'proposta' },
     novas:      { t: 'Vistas nas últimas 24h', item: r => r.ls.some(l => l.situacao === 'proposta' && ehNovo(l)), linha: l => l.situacao === 'ativa' || ehNovo(l) },
+    prejuizo:   { t: '⚠️ Dão prejuízo', item: r => r.ls.some(l => l.situacao === 'proposta' && l.daPrejuizo === true), linha: l => l.situacao === 'ativa' || l.daPrejuizo === true },
   };
   if (!FILTROS[promoFiltro]) promoFiltro = 'todos';
   const linhaDoTipo = l => !promoTipo || l.rotulo === promoTipo || l.situacao === 'ativa';
@@ -1094,7 +1095,7 @@ function renderPromocoes() {
     if (!ls.length) {
       const r = resumoDe.get(itemId);
       const nome = r.permalink ? '<a href="' + r.permalink + '" target="_blank" rel="noopener">' + esc(r.titulo) + '</a>' : esc(r.titulo);
-      return '<tr class="item-head"><td colspan="7">' + nome + ' <span class="muted">' + itemId + '</span>' +
+      return '<tr class="item-head"><td colspan="8">' + nome + ' <span class="muted">' + itemId + '</span>' +
         '<div class="muted" style="margin-top:3px">hoje <b>' + fmtMoney(r.precoAtual) + '</b>' + (r.vendas30 != null ? ' · ' + r.vendas30 + ' venda(s) em 30 dias' : '') + '</div>' +
         '<div style="margin-top:5px"><span class="tag proposta">sem promoção ativa</span> <span class="muted">· o ML não oferece nenhuma promoção para este anúncio agora; dá para criar um desconto próprio no ML</span></div></td></tr>';
     }
@@ -1103,18 +1104,20 @@ function renderPromocoes() {
     const nome = a.permalink ? '<a href="' + a.permalink + '" target="_blank" rel="noopener">' + esc(a.titulo || itemId) + '</a>' : esc(a.titulo || itemId);
     const hoje = 'hoje <b>' + fmtMoney(a.precoAtual) + '</b>' +
       (a.precoCheio != null && a.precoCheio !== a.precoAtual ? ' <span class="muted">(cheio ' + fmtMoney(a.precoCheio) + ')</span>' : '') +
-      (a.voceRecebeHoje != null ? ' · você recebe ~' + fmtMoney(a.voceRecebeHoje) : '');
+      (a.voceRecebeHoje != null ? ' · você recebe ~' + fmtMoney(a.voceRecebeHoje) : '') +
+      (a.lucroHoje != null ? ' · lucro ~' + fmtMoney(a.lucroHoje) : a.custoUnitario == null ? ' · <span title="Sem custo no Tiny: lucro desconhecido">sem custo</span>' : '');
     // v48: a promoção em vigor fica sempre à vista no cabeçalho do anúncio, mesmo sem proposta melhor.
     const { vale: melhor, ganho: ganhoMax } = resumoDe.get(itemId);
     const emVigor = (ativa
       ? '<span class="tag ativa">EM VIGOR: ' + esc(ativa.nome || ativa.rotulo) + '</span>'
       : '<span class="tag proposta">sem promoção ativa</span>') +
       (melhor ? ' <span class="tag mlbanca">até +' + fmtMoney(ganhoMax) + ' por venda</span>' : ' <span class="muted">· nenhuma proposta melhor que a atual</span>');
-    const cab = '<tr class="item-head"><td colspan="7">' + nome + ' <span class="muted">' + itemId + '</span><div class="muted" style="margin-top:3px">' + hoje + '</div><div style="margin-top:5px">' + emVigor + '</div></td></tr>';
+    const cab = '<tr class="item-head"><td colspan="8">' + nome + ' <span class="muted">' + itemId + '</span><div class="muted" style="margin-top:3px">' + hoje + '</div><div style="margin-top:5px">' + emVigor + '</div></td></tr>';
     const linhas = ls.map(l => {
       const tags = (ehRelampago(l) ? '<span class="tag relampago">⚡ relâmpago</span> ' : '') +
         (l.mlBanca > 0 ? '<span class="tag mlbanca">ML banca</span> ' : '') +
         (ehNovo(l) ? '<span class="tag novo">novo</span> ' : '') +
+        (l.daPrejuizo === true && l.situacao !== 'ativa' ? '<span class="tag perdendo">⚠️ prejuízo</span> ' : '') +
         (l.situacao === 'ativa' ? '<span class="tag ativa">ATIVA</span>' : l.situacao === 'programada' ? '<span class="tag programada">PROGRAMADA</span>' : '<span class="tag proposta">nova proposta</span>');
       const periodo = [fmtData(l.inicio), fmtData(l.fim)].filter(Boolean).join(' a ');
       const faixa = l.precoMinimo || l.precoMaximo ? '<div class="muted">aceita ' + fmtMoney(l.precoMinimo) + ' a ' + fmtMoney(l.precoMaximo) + '</div>' : '';
@@ -1127,6 +1130,7 @@ function renderPromocoes() {
         '<td class="num">' + (l.mlBanca > 0 ? '~' + fmtMoney(l.mlBanca) : '—') + '</td>' +
         '<td class="num">' + (l.mlBanca > 0 && l.voceRecebe != null ? '~' : '') + fmtMoney(l.voceRecebe) + '</td>' +
         '<td class="num">' + difHtml + '<div class="muted">' + (l.situacao === 'ativa' ? 'é o que vale hoje' : l.semEfeito ? 'preço acima do atual' : 'por venda') + '</div></td>' +
+        '<td class="num">' + lucroHtml(l) + '</td>' +
         '<td>' + (l.situacao === 'proposta' && PROMO_ADERIVEL.test(l.tipo)
           ? '<button class="secondary" onclick="abrirAdesao(\'' + esc(l.itemId) + '\',\'' + esc(l.promocaoId || '') + '\',\'' + esc(l.tipo) + '\')">Participar</button>'
           : '') + '</td>' +
@@ -1140,6 +1144,7 @@ function renderPromocoes() {
       '<b>' + propostas.length + '</b> proposta(s) em <b>' + new Set(propostas.map(l => l.itemId)).size + '</b> anúncio(s) · ' +
       '<b>' + propostas.filter(ehRelampago).length + '</b> relâmpago · <b>' + propostas.filter(l => l.mlBanca > 0).length + '</b> com parte bancada pelo ML.' +
       '<br><span class="muted">"Você recebe": preço + parte do ML − tarifa − frete grátis, os dois pelo cálculo do ML naquele preço (sem frete grátis, usa o frete médio de 30 dias). Tarifa e frete batem com a tela do ML. A parte que o ML banca (marcada com ~) pode diferir alguns centavos: a API só informa o percentual com uma casa decimal. ' +
+      '"Lucro / venda": você recebe − custo do produto (Tiny) − imposto (% real das notas de venda, aba Custos); "—" = falta o custo. ' +
       '"vs. hoje" compara com o que você já recebe hoje, incluindo a parte do ML na promoção ativa. Proposta com preço acima do atual "não muda": o ML aplica o menor preço. "Participar" mostra a simulação e só adere depois da sua confirmação. Atualizado em ' + fmtHora(promocoes.atualizadoEm) +
       (promocoes.avisoDaApi ? ' · ' + esc(promocoes.avisoDaApi) : '') + '</span>' +
     '</div></div>' +
@@ -1149,9 +1154,16 @@ function renderPromocoes() {
     (grupos.size === 0
       ? '<div class="muted" style="padding:16px 0;text-align:center">Nenhum anúncio neste filtro.</div>'
       : '<div class="table-scroll"><table><thead><tr><th>Promoção</th><th>Período</th><th class="num">Preço proposto</th>' +
-        '<th class="num">ML banca</th><th class="num">Você recebe</th><th class="num">vs. hoje</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>');
+        '<th class="num">ML banca</th><th class="num">Você recebe</th><th class="num">vs. hoje</th><th class="num">Lucro / venda</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>');
 }
 
+// v51: lucro por venda da ficha do produto (custo do Tiny + imposto real das notas)
+function lucroHtml(l) {
+  if (l.lucroPorVenda != null) return '<b class="' + (l.lucroPorVenda >= 0 ? 'delta-up' : 'delta-down') + '">' + (l.lucroPorVenda < 0 ? '−' : '') + fmtMoney(Math.abs(l.lucroPorVenda)) + '</b>' +
+    '<div class="muted">custo ' + fmtMoney(l.custoUnitario) + ' · imposto ' + String(l.impostoPct).replace('.', ',') + '%</div>';
+  if (l.lucroAntesDoImposto != null) return '<b class="' + (l.lucroAntesDoImposto >= 0 ? 'delta-up' : 'delta-down') + '">' + (l.lucroAntesDoImposto < 0 ? '−' : '') + fmtMoney(Math.abs(l.lucroAntesDoImposto)) + '</b><div class="muted">antes do imposto</div>';
+  return '<span class="muted" title="Sem custo no Tiny para este produto">—</span>';
+}
 // --- adesão a uma promoção (v39) ---
 let promoSim = null;
 let promoPedido = null;

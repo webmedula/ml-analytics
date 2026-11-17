@@ -10,6 +10,8 @@ import { lacunasParaCsv, margemDaVenda } from '../core/margem';
 import { montarFila, resumirFila } from '../core/filaRecriacao';
 import { getMargem, refreshMargem } from '../core/margemScan';
 import { obterDiagnostico } from '../core/diagnosticoCustos';
+import { lucroDaVenda, obterFichas } from '../core/lucro';
+import { chaveSku as chaveDoSku } from '../core/custos';
 import { obterPlano, parametrosDaQuery } from '../core/compras';
 import { montarIndice, sugerirCorrespondencia } from '../core/skuMatch';
 import { lerPaginacao, procurarSkuNoTiny } from '../tiny/tinyClient';
@@ -268,6 +270,38 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao montar o diagnostico de custos' };
     }
+  });
+
+  /**
+   * v51: fichas de lucro (custo unitario + % de imposto) — a fonte unica que a Central de Ocorrencias,
+   * a aba Promocoes e o Gerente leem. ?skus=A,B filtra; ?refresh=1 refaz.
+   */
+  app.get('/api/custos/fichas', async (req, reply) => {
+    const { skus, refresh } = req.query as { skus?: string; refresh?: string };
+    try {
+      const f = await obterFichas(refresh === '1');
+      const pedidos = skus ? skus.split(',').map((s) => chaveDoSku(s)).filter((s): s is string => !!s) : null;
+      const porSku = pedidos ? Object.fromEntries(pedidos.map((k) => [k, f.porSku[k] ?? { sku: k, custoUnitario: null, impostoPct: f.imposto.percentualGeral, impostoOrigem: f.imposto.percentualGeral != null ? 'geral' : null }])) : f.porSku;
+      return { atualizadoEm: f.atualizadoEm, imposto: f.imposto, porSku, ...(pedidos ? {} : { porItem: f.porItem }) };
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro ao montar as fichas de lucro' };
+    }
+  });
+
+  /**
+   * v51: lucro de uma venda pelo mesmo calculo das promocoes. ?sku= (ou ?itemId=) &preco= &recebe= (o que o ML
+   * deposita: preco + parte do ML − tarifa − frete) &unidades=1.
+   */
+  app.get('/api/custos/lucro', async (req, reply) => {
+    const q = req.query as { sku?: string; itemId?: string; preco?: string; recebe?: string; unidades?: string };
+    const f = await obterFichas().catch(() => null);
+    if (!f) { reply.code(503); return { mensagem: 'Fichas de lucro ainda nao montadas.' }; }
+    const k = chaveDoSku(q.sku) ?? (q.itemId ? f.porItem[q.itemId] : undefined) ?? null;
+    const ficha = k ? f.porSku[k] ?? null : null;
+    const num = (v?: string) => (v == null || v === '' ? null : Number(String(v).replace(',', '.')));
+    const preco = num(q.preco), recebe = num(q.recebe), unidades = Math.max(1, Math.trunc(Number(q.unidades) || 1));
+    return { sku: k, ficha, ...lucroDaVenda(recebe, preco, ficha, unidades) };
   });
 
   /**
