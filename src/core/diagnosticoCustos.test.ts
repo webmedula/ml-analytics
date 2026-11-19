@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { montarDiagnostico, type ImpostosDoBackup, type RespostaImpostosBackup } from './diagnosticoCustos';
+import { margemPorUnidade, montarDiagnostico, type ImpostosDoBackup, type RespostaImpostosBackup } from './diagnosticoCustos';
 import { comCustoManual, resumirLacunas, type LacunaDoAnuncio } from './margem';
 import type { ProdutoNormalizado } from '../tiny/tinyClient';
 
@@ -103,6 +103,23 @@ describe('custo manual e dados do ML no diagnóstico', () => {
     // apagar o manual volta ao Tiny
     const volta = comCustoManual(comManual.find((x) => x.itemId === 'MLB3')!, {});
     expect(volta).toMatchObject({ estado: 'sem_custo_no_tiny', custo: null, custoOrigem: null });
+  });
+});
+
+describe('margem por venda (v55)', () => {
+  it('com os dados do ML: você recebe hoje − custo − imposto sobre o preço de hoje (MCS9515 do print)', () => {
+    const ml = { voceRecebe: 312.63, preco: 799, precoPromocao: 386 };
+    expect(margemPorUnidade(75, null, ml, 20027.15, 21926.05, 57)).toEqual({ margemUnitaria: 237.63, margemUnitariaPct: 61.6, margemUnitariaBase: 'hoje', margemUnitariaComImposto: false });
+    expect(margemPorUnidade(75, 10, ml, 0, 0, 0)).toMatchObject({ margemUnitaria: 199.03, margemUnitariaComImposto: true });
+  });
+  it('sem os dados do ML usa a média dos 30 dias; sem custo fica null', () => {
+    expect(margemPorUnidade(10, 20, null, 800, 1000, 40)).toMatchObject({ margemUnitaria: 5, margemUnitariaPct: 20, margemUnitariaBase: 'media30' });
+    expect(margemPorUnidade(null, 20, { voceRecebe: 50, preco: 80, precoPromocao: null }, 0, 0, 0)).toMatchObject({ margemUnitaria: null, margemUnitariaBase: 'hoje' });
+  });
+  it('vai para a linha do anúncio', () => {
+    const d = montarDiagnostico(margem, produtos, backup(), { divergenciaPct: 15 });
+    // MLB1: (800/40) − 10 − 20% de (1000/40) = 20 − 10 − 5 = 5 por venda
+    expect(d.top[0]).toMatchObject({ itemId: 'MLB1', margemUnitaria: 5, margemUnitariaPct: 20, margemUnitariaBase: 'media30' });
   });
 });
 
