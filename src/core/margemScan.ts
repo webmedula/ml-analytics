@@ -1,5 +1,6 @@
 import { obterCustos } from './custos';
-import { classificarCusto, LacunaDoAnuncio, resumirLacunas, ResumoDeLacunas } from './margem';
+import { classificarCusto, comCustoManual, LacunaDoAnuncio, resumirLacunas, ResumoDeLacunas } from './margem';
+import { listarManuais } from './custosManuais';
 import { getItemsSkus, getSalesByItem, getSellerItemIds } from '../ml/mlClient';
 import { logger } from '../logger';
 
@@ -51,6 +52,15 @@ export function getMargem(): ResultadoMargem | null {
   return cache;
 }
 
+/** v54: reaplica os custos manuais na ultima varredura, sem ir ao ML nem ao Tiny de novo. */
+export function reaplicarCustosManuais(): ResultadoMargem | null {
+  if (!cache) return null;
+  const manuais = listarManuais();
+  const anuncios = cache.anuncios.map((a) => comCustoManual(a, manuais));
+  cache = { ...cache, anuncios, resumo: resumirLacunas(anuncios) };
+  return cache;
+}
+
 export async function refreshMargem(maxAnuncios = 500, dias = 30): Promise<ResultadoMargem> {
   // v53: cada etapa diz o nome quando falha (antes vinha so a mensagem crua do ML, sem saber de onde).
   const ids = await etapa('lista de anuncios do ML', () => getSellerItemIds(maxAnuncios, false));
@@ -60,6 +70,7 @@ export async function refreshMargem(maxAnuncios = 500, dias = 30): Promise<Resul
   const { porItem } = await etapa('vendas dos ultimos dias no ML', () => getSalesByItem(dias));
 
   const semCusto = new Set(custos.semCusto);
+  const manuais = listarManuais();
   const anuncios: LacunaDoAnuncio[] = [];
 
   for (const [itemId, info] of skus.entries()) {
@@ -69,7 +80,7 @@ export async function refreshMargem(maxAnuncios = 500, dias = 30): Promise<Resul
     // acrescenta a mercadoria. Manter a conta em UM lugar evita dois "liquidos" diferentes no painel.
     const liquido = v ? Math.round((v.bruto - v.comissao - v.frete) * 100) / 100 : 0;
 
-    anuncios.push({
+    anuncios.push(comCustoManual({
       itemId,
       titulo: info.title || '',
       sku: info.sku,
@@ -79,7 +90,8 @@ export async function refreshMargem(maxAnuncios = 500, dias = 30): Promise<Resul
       liquido,
       unidades: v?.unidades ?? 0,
       bruto: v ? Math.round(v.bruto * 100) / 100 : 0,
-    });
+      unidadesD7: v?.unidadesD7 ?? 0,
+    }, manuais));
   }
 
   // Ordena por dinheiro preso: quem cuida do cadastro comeca pelo topo e para quando quiser, tendo

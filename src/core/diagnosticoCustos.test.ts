@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { montarDiagnostico, type ImpostosDoBackup, type RespostaImpostosBackup } from './diagnosticoCustos';
-import { resumirLacunas, type LacunaDoAnuncio } from './margem';
+import { comCustoManual, resumirLacunas, type LacunaDoAnuncio } from './margem';
 import type { ProdutoNormalizado } from '../tiny/tinyClient';
 
 const anuncio = (o: Partial<LacunaDoAnuncio> & { itemId: string }): LacunaDoAnuncio => ({
@@ -57,13 +57,17 @@ describe('montarDiagnostico', () => {
     expect(d.importacao.divergentes).toEqual([{ sku: 'RL-1', descricao: 'Lâmpada A', custoTiny: 10, custoNota: 8, diferencaPct: -20, ultimaEntrada: '2026-09-20', liquido: 1000 }]);
     expect(d.importacao.semCustoNoTinyComNota).toEqual([{ sku: 'FA-2', descricao: 'Farol', custoNota: 45, ultimaEntrada: '2026-10-01' }]);
 
+    // v54: uma linha por anúncio; o SKU vem junto e diz quantos anúncios vendem o mesmo produto
+    expect(d.top.map((t) => t.itemId)).toEqual(['MLB1', 'MLB3', 'MLB2', 'MLB4', 'MLB5']);
     const a = d.top[0]!;
-    // RL-1: dois anúncios somados; imposto do próprio produto (20%) porque vendeu R$ 2.000 nas notas
-    expect(a).toMatchObject({ sku: 'RL-1', anuncios: 2, unidades: 50, bruto: 1250, liquido: 1000, custoMercadoria: 500, impostoPct: 20, impostoOrigem: 'produto', impostoEstimado: 250, margem: 250, margemPct: 20, custoNotaImportacao: 8, diferencaImportacaoPct: -20 });
+    // MLB1 (RL-1): imposto do próprio produto (20%) porque vendeu R$ 2.000 nas notas
+    expect(a).toMatchObject({ itemId: 'MLB1', sku: 'RL-1', anunciosDoSku: 2, unidades: 40, bruto: 1000, liquido: 800, custoOrigem: 'tiny', custoMercadoria: 400, impostoPct: 20, impostoOrigem: 'produto', impostoEstimado: 200, margemAntesDoImposto: 400, margem: 200, margemPct: 20, custoNotaImportacao: 8, diferencaImportacaoPct: -20, ml: null });
+    expect(d.top.find((t) => t.itemId === 'MLB2')).toMatchObject({ sku: 'RL-1', anunciosDoSku: 2, liquido: 200, custoMercadoria: 100 });
     // FA-2 sem custo: margem fica null ("não sei"), nunca zero
     const f = d.top.find((t) => t.sku === 'FA-2')!;
-    expect(f).toMatchObject({ custoMercadoria: null, margem: null, impostoPct: 15, impostoOrigem: 'geral' });
-    expect(d.top.some((t) => t.sku === 'MLB4')).toBe(false);
+    expect(f).toMatchObject({ custoMercadoria: null, margem: null, margemAntesDoImposto: null, impostoPct: 15, impostoOrigem: 'geral' });
+    // anúncio sem SKU também aparece (antes sumia), com o imposto geral
+    expect(d.top.find((t) => t.itemId === 'MLB4')).toMatchObject({ sku: null, anunciosDoSku: 1, impostoPct: 15 });
 
     expect(d.impostos).toMatchObject({ disponivel: true, percentualGeral: 15, produtosComImposto: 1, periodo: '2026-08 a 2026-10' });
     expect(d.achados.join(' ')).toMatch(/15% do valor vendido/);
@@ -73,7 +77,7 @@ describe('montarDiagnostico', () => {
   it('sem backup: diagnóstico sai sem imposto e diz por quê', () => {
     const d = montarDiagnostico(margem, produtos, { disponivel: false, calculando: true, motivo: 'o backup está somando as notas fiscais' }, { divergenciaPct: 15 });
     expect(d.impostos).toMatchObject({ disponivel: false, calculando: true });
-    expect(d.top[0]).toMatchObject({ impostoPct: null, margem: null });
+    expect(d.top[0]).toMatchObject({ impostoPct: null, margem: null, margemAntesDoImposto: 400 });
     expect(d.achados.join(' ')).toMatch(/somando as notas/);
     expect(d.importacao.conferidos).toBe(0);
   });
@@ -83,6 +87,22 @@ describe('montarDiagnostico', () => {
     expect(d.impostos.percentualGeral).toBeNull();
     expect(d.top[0]!.impostoPct).toBeNull();
     expect(d.achados.join(' ')).toMatch(/DAS/);
+  });
+});
+
+describe('custo manual e dados do ML no diagnóstico', () => {
+  it('custo digitado vale no lugar do Tiny e aparece marcado', () => {
+    const manuais = { 'sku:FA-2': { tipo: 'sku' as const, chave: 'FA-2', custo: 50, obs: 'nota de out', em: '2026-11-19T00:00:00Z' } };
+    const comManual = anuncios.map((x) => comCustoManual(x, manuais));
+    const m = { janelaDias: 30, anuncios: comManual, resumo: resumirLacunas(comManual) };
+    const d = montarDiagnostico(m, produtos, backup(), { divergenciaPct: 15, manuais });
+    expect(d.top.find((t) => t.sku === 'FA-2')).toMatchObject({ custoUnitario: 50, custoOrigem: 'manual', custoMercadoria: 250, margemAntesDoImposto: 250 });
+    expect(d.manuais).toHaveLength(1);
+    expect(d.cobertura.coberturaPorFaturamento).toBeGreaterThan(residual());
+    expect(d.achados.join(' ')).toMatch(/digitado/);
+    // apagar o manual volta ao Tiny
+    const volta = comCustoManual(comManual.find((x) => x.itemId === 'MLB3')!, {});
+    expect(volta).toMatchObject({ estado: 'sem_custo_no_tiny', custo: null, custoOrigem: null });
   });
 });
 

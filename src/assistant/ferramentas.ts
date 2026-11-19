@@ -111,8 +111,9 @@ export const FERRAMENTAS: DefinicaoDeFerramenta[] = [
     description:
       'Diagnostico de custos dos produtos: quanto do faturamento tem custo confiavel, o imposto que saiu de fato ' +
       'nas notas de venda (lido do backup das NF-e), produtos com custo do Tiny longe da nota de importacao, ' +
-      'preco de custo x custo medio divergentes, kits sem custo e os 30 produtos que mais faturam com custo, ' +
-      'imposto e margem. Use para perguntas sobre custo, imposto, margem real ou se da para confiar na margem.',
+      'preco de custo x custo medio divergentes, kits sem custo e os anuncios que mais faturam (um por linha, com SKU, ' +
+      'custo, imposto, margem e os dados do ML: preco, preco em promocao, "voce recebe", tarifa, frete, visitas, vendas e ' +
+      'conversao de 7 dias, estoque e qualidade). custoOrigem "manual" = custo digitado no painel no lugar do Tiny. Use para perguntas sobre custo, imposto, margem real ou se da para confiar na margem.',
     input_schema: { type: 'object', properties: { limite: { type: 'integer' } } },
   },
   {

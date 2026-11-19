@@ -745,6 +745,38 @@ async function carregarCustos(forcar) {
   catch (e) { el.innerHTML = '<div class="insight bad">Não consegui montar o diagnóstico: ' + esc(e.message) + '</div>'; return; }
   renderCustos();
 }
+let custosSoSemCusto = false;
+function formCustoManual(t) {
+  const id = esc(t.itemId);
+  const opSku = t.sku ? '<option value="sku">o produto ' + esc(t.sku) + ' (todos os anúncios dele)</option>' : '';
+  return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:6px 0">' +
+    '<span>Custo por unidade R$</span><input id="cmv-' + id + '" inputmode="decimal" placeholder="0,00" style="width:90px" value="' + (t.custoOrigem === 'manual' ? String(t.custoUnitario).replace('.', ',') : '') + '">' +
+    '<span>vale para</span><select id="cmt-' + id + '">' + opSku + '<option value="anuncio">só este anúncio (' + id + ')</option></select>' +
+    '<input id="cmo-' + id + '" placeholder="observação (opcional)" style="flex:1;min-width:160px">' +
+    '<button onclick="salvarCustoManual(\'' + id + '\', \'' + esc(t.sku || '') + '\')">Salvar</button>' +
+    '<span id="cmm-' + id + '" class="muted"></span></div>';
+}
+function abrirCustoManual(itemId) {
+  const tr = document.getElementById('cm-' + itemId);
+  if (!tr) return;
+  tr.style.display = tr.style.display === 'none' ? '' : 'none';
+  if (tr.style.display === '') document.getElementById('cmv-' + itemId).focus();
+}
+async function salvarCustoManual(itemId, sku) {
+  const tipo = document.getElementById('cmt-' + itemId).value;
+  const msg = document.getElementById('cmm-' + itemId);
+  msg.textContent = 'Salvando...';
+  try {
+    const r = await apiPost('/api/custos/manual', { tipo, chave: tipo === 'sku' ? sku : itemId, custo: document.getElementById('cmv-' + itemId).value, obs: document.getElementById('cmo-' + itemId).value });
+    if (r.diagnostico) { custos = r.diagnostico; renderCustos(); } else await carregarCustos(false);
+  } catch (e) { msg.textContent = e.message; }
+}
+async function removerCustoManual(tipo, chave) {
+  try {
+    const r = await apiPost('/api/custos/manual/remover', { tipo, chave });
+    if (r.diagnostico) { custos = r.diagnostico; renderCustos(); } else await carregarCustos(false);
+  } catch (e) { alert(e.message); }
+}
 function renderCustos() {
   const d = custos, el = document.getElementById('custosBody');
   if (!d) return;
@@ -765,14 +797,38 @@ function renderCustos() {
   if (!im.disponivel && im.motivo) h += '<div class="insight warn" style="margin-top:10px">Imposto: ' + esc(im.motivo) + (im.calculando ? ' <a href="#" onclick="carregarCustos(false); return false">tentar de novo</a>' : '') + '</div>';
   if (im.observacao) h += '<div class="insight warn" style="margin-top:10px">' + esc(im.observacao) + '</div>';
 
-  h += sec('Os ' + d.top.length + ' produtos que mais faturam', 'Confira se o custo de cada um está certo. Margem = líquido (já sem tarifa e frete do ML) − mercadoria − imposto. "—" quer dizer que falta dado, não que é zero.');
-  h += tabela('<th>Produto</th><th class="num">Un.</th><th class="num">Bruto</th><th class="num">Líquido</th><th class="num">Custo un.</th><th class="num">Nota import.</th><th class="num">Imposto</th><th class="num">Margem</th><th class="num">Margem %</th>',
-    d.top.map(t => '<tr><td class="title-cell" title="' + esc(t.titulo) + '"><b>' + esc(t.sku) + '</b> <span class="muted">' + esc(t.titulo) + (t.anuncios > 1 ? ' · ' + t.anuncios + ' anúncios' : '') + '</span></td>' +
-      '<td class="num">' + t.unidades + '</td><td class="num">' + fmtMoney(t.bruto) + '</td><td class="num">' + fmtMoney(t.liquido) + '</td>' +
-      '<td class="num">' + (t.custoUnitario == null ? '<span class="tag perdendo">sem custo</span>' : fmtMoney(t.custoUnitario)) + '</td>' +
-      '<td class="num">' + (t.custoNotaImportacao == null ? '—' : fmtMoney(t.custoNotaImportacao) + (t.diferencaImportacaoPct != null ? ' <span class="muted">(' + (t.diferencaImportacaoPct > 0 ? '+' : '') + fmtPct(t.diferencaImportacaoPct) + ')</span>' : '')) + '</td>' +
-      '<td class="num">' + (t.impostoEstimado == null ? '—' : fmtMoney(t.impostoEstimado) + ' <span class="muted">' + fmtPct(t.impostoPct) + (t.impostoOrigem === 'geral' ? ' média' : '') + '</span>') + '</td>' +
-      '<td class="num">' + fmtMoney(t.margem) + '</td><td class="num">' + fmtPct(t.margemPct) + '</td></tr>'), 'Nenhuma venda na janela.');
+  // v54: uma linha por anúncio (o SKU aparece junto), com os dados da Gestão de anúncios do ML e o custo editável
+  const semImposto = !im.disponivel || im.percentualGeral == null;
+  h += sec('Os ' + d.top.length + ' anúncios que mais faturam', 'Uma linha por anúncio. "Você recebe" é o que o ML deposita por venda hoje (preço − tarifa − frete), como na Gestão de anúncios. Margem = líquido − mercadoria' + (semImposto ? ' (ainda sem o imposto, que está indisponível)' : ' − imposto') + '. Clique no custo para digitar um custo que vale no lugar do Tiny. "—" quer dizer que falta dado, não que é zero.');
+  h += '<label class="muted" style="display:inline-block;margin:6px 0"><input type="checkbox" id="cstSoSemCusto"' + (custosSoSemCusto ? ' checked' : '') + ' onchange="custosSoSemCusto=this.checked;renderCustos()"> só os sem custo</label>';
+  const linhasTop = d.top.filter(t => !custosSoSemCusto || t.custoUnitario == null);
+  h += tabela('<th>Anúncio</th><th class="num">Un. 30d</th><th class="num">Bruto</th><th class="num">Líquido</th><th class="num">Preço</th><th class="num">Você recebe</th><th class="num">Custo un.</th><th class="num">Margem</th><th class="num">Margem %</th><th class="num">7 dias</th><th class="num">Estoque</th><th class="num">Qualidade</th>',
+    linhasTop.map(t => {
+      const m = t.ml || {};
+      const titulo = m.permalink ? '<a href="' + esc(m.permalink) + '" target="_blank" rel="noopener">' + esc(t.titulo) + '</a>' : esc(t.titulo);
+      const sub = [t.itemId, m.tipoRotulo, t.anunciosDoSku > 1 ? t.anunciosDoSku + ' anúncios com este SKU' : null].filter(Boolean).join(' · ');
+      const custo = t.custoUnitario == null ? '<span class="tag perdendo">sem custo</span>' : fmtMoney(t.custoUnitario) + (t.custoOrigem === 'manual' ? ' <span class="tag motivo">manual</span>' : '');
+      const margem = t.margem != null ? t.margem : t.margemAntesDoImposto;
+      const margemPct = t.margemPct != null ? t.margemPct : (t.margemAntesDoImposto != null && t.bruto > 0 ? Math.round(t.margemAntesDoImposto / t.bruto * 1000) / 10 : null);
+      const corM = margem == null ? '' : (margem < 0 ? ' style="color:var(--red)"' : '');
+      const preco = m.preco == null ? '—' : (m.precoPromocao != null ? '<s class="muted">' + fmtMoney(m.preco) + '</s><br>' + fmtMoney(m.precoPromocao) : fmtMoney(m.preco));
+      const recebe = m.voceRecebe == null ? '—' : '<b>' + fmtMoney(m.voceRecebe) + '</b><br><span class="muted" style="font-size:11px">tarifa ' + fmtMoney(m.tarifa) + (m.freteGratis === false ? ' · frete do comprador' : ' · frete ' + fmtMoney(m.frete)) + '</span>';
+      const sete = m.visitas7 == null && m.vendas7 == null ? '—' : (m.visitas7 ?? '—') + ' vis.<br>' + (m.vendas7 ?? '—') + ' vend. · ' + fmtPct(m.conversao7);
+      return '<tr><td class="title-cell" title="' + esc(t.titulo) + '"><b>' + esc(t.sku || 'sem SKU') + '</b> ' + titulo + '<br><span class="muted" style="font-size:11px">' + esc(sub) + '</span></td>' +
+        '<td class="num">' + t.unidades + '</td><td class="num">' + fmtMoney(t.bruto) + '</td><td class="num">' + fmtMoney(t.liquido) + '</td>' +
+        '<td class="num">' + preco + '</td><td class="num">' + recebe + '</td>' +
+        '<td class="num"><a href="#" title="Digitar o custo" onclick="abrirCustoManual(\'' + esc(t.itemId) + '\'); return false">' + custo + ' ✏️</a></td>' +
+        '<td class="num"' + corM + '>' + fmtMoney(margem) + '</td><td class="num"' + corM + '>' + fmtPct(margemPct) + '</td>' +
+        '<td class="num" style="font-size:12px">' + sete + '</td><td class="num">' + (m.estoque ?? '—') + '</td><td class="num">' + (m.qualidade == null ? '—' : m.qualidade) + '</td></tr>' +
+        '<tr id="cm-' + esc(t.itemId) + '" style="display:none"><td colspan="12">' + formCustoManual(t) + '</td></tr>';
+    }), custosSoSemCusto ? 'Todos os anúncios da lista têm custo.' : 'Nenhuma venda na janela.');
+
+  if (d.manuais && d.manuais.length) {
+    h += sec('Custos digitados aqui', 'Valem no lugar do Tiny na margem, nas promoções, no Gerente e na Central. O Tiny não é alterado.');
+    h += tabela('<th>Produto / anúncio</th><th class="num">Custo</th><th>Observação</th><th>Quando</th><th></th>',
+      d.manuais.map(x => '<tr><td><b>' + esc(x.chave) + '</b> <span class="muted">' + (x.tipo === 'sku' ? 'produto (todos os anúncios)' : 'só este anúncio') + '</span></td><td class="num">' + fmtMoney(x.custo) + '</td><td>' + esc(x.obs || '') + '</td><td>' + esc(fmtHora(x.em)) + '</td>' +
+        '<td><a href="#" onclick="removerCustoManual(\'' + esc(x.tipo) + '\',\'' + esc(x.chave) + '\'); return false">apagar</a></td></tr>'));
+  }
 
   h += sec('Custo do Tiny longe da nota de importação', 'Custo por unidade pela nota de entrada (valor aduaneiro + impostos de importação + despesas da nota). Despachante e frete até a MCS não estão na nota, então o Tiny costuma ficar um pouco acima. ' + esc(d.importacao.observacao || ''));
   h += tabela('<th>Produto</th><th class="num">Custo no Tiny</th><th class="num">Custo pela nota</th><th class="num">Diferença</th><th>Última entrada</th><th class="num">Líquido ' + d.janelaDias + 'd</th>',
