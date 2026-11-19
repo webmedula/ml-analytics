@@ -14,6 +14,12 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       // que sai o diagnostico, sem precisar de chave nem de acesso ao log do servidor.
       node: process.version,
       banco: estadoDoBanco(),
+      // v56: se o servico enxerga a configuracao do backup (sem mostrar a chave)
+      backup: {
+        url: config.backupBaseUrl || null,
+        chaveConfigurada: !!config.backupApiKey,
+        variaveis: config.backupVariaveis,
+      },
     };
   });
 }

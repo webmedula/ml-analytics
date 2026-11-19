@@ -9,9 +9,30 @@ function inteiroPositivo(v: string | undefined, padrao: number): number {
   return v && Number.isFinite(n) && n > 0 ? n : padrao;
 }
 
+/**
+ * v56: primeiro valor preenchido entre varios nomes de variavel, sem espacos nem aspas em volta
+ * (paineis de deploy as vezes guardam `"valor"` ou `valor ` com espaco, e o servico lia como outro valor).
+ */
+export function envDeUmDestes(nomes: string[], env: Record<string, string | undefined> = process.env): { valor: string; nome: string | null } {
+  for (const n of nomes) {
+    const v = (env[n] ?? '').trim().replace(/^(['"])(.*)\1$/, '$2').trim();
+    if (v) return { valor: v, nome: n };
+  }
+  return { valor: '', nome: null };
+}
+
+/** URL do backup: sem barra no fim; sem https:// na frente, acrescenta. */
+export function normalizarUrlBase(v: string): string {
+  const u = v.replace(/\/+$/, '');
+  return u && !/^https?:\/\//i.test(u) ? `https://${u}` : u;
+}
+
+const backupUrlEnv = envDeUmDestes(['BACKUP_BASE_URL', 'BACKUP_URL']);
+const backupKeyEnv = envDeUmDestes(['BACKUP_API_KEY', 'BACKUP_PANEL_API_KEY', 'PANEL_API_KEY']);
+
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v55 (2026-11-19)',
+  appVersion: 'analytics v56 (2026-11-19)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -72,9 +93,11 @@ export const config = {
   // --- v50: diagnostico de custos ---
   /** Backup do Tiny (mcs-backup-tiny): soma os XMLs das notas e devolve o imposto real das vendas e o
    * custo das importacoes por produto (GET /painel/api/impostos). Vazio = diagnostico sem imposto. */
-  backupBaseUrl: (process.env.BACKUP_BASE_URL || '').replace(/\/+$/, ''),
-  /** A PANEL_API_KEY do backup (cabecalho x-api-key). */
-  backupApiKey: process.env.BACKUP_API_KEY || '',
+  backupBaseUrl: normalizarUrlBase(backupUrlEnv.valor),
+  /** A PANEL_API_KEY do backup (cabecalho x-api-key). v56: aceita tambem BACKUP_PANEL_API_KEY ou PANEL_API_KEY. */
+  backupApiKey: backupKeyEnv.valor,
+  /** v56: de qual variavel veio cada um (aparece no /health, sem o valor). */
+  backupVariaveis: { url: backupUrlEnv.nome, chave: backupKeyEnv.nome },
   /** Diferenca (%) entre preco de custo e custo medio do Tiny, ou entre o custo do Tiny e o da nota de
    * importacao, a partir da qual o diagnostico aponta o produto. */
   custoDivergenciaPct: Number(process.env.CUSTO_DIVERGENCIA_PCT || 15),

@@ -377,10 +377,17 @@ export function montarDiagnostico(
 
 // ---------- leitura do backup ----------
 
+/**
+ * v56: diz QUAL das duas variaveis o servico nao enxerga. A causa mais comum e a variavel salva no painel de
+ * deploy sem implantar de novo: o servico so le o ambiente quando sobe. PURA.
+ */
+export function motivoSemConfiguracao(url: string, chave: string): string {
+  const faltam = [!url ? 'BACKUP_BASE_URL' : null, !chave ? 'BACKUP_API_KEY' : null].filter(Boolean).join(' e ');
+  return `o serviço que está no ar não enxerga ${faltam}. Se já estão no ambiente, implante (deploy) de novo para elas valerem; confira também o nome exato. BACKUP_API_KEY é a PANEL_API_KEY do backup.`;
+}
+
 export async function buscarImpostosDoBackup(periodo?: { de: string; ate: string }): Promise<ImpostosDoBackup> {
-  if (!config.backupBaseUrl || !config.backupApiKey) {
-    return { disponivel: false, calculando: false, motivo: 'defina BACKUP_BASE_URL e BACKUP_API_KEY (a PANEL_API_KEY do backup) para ler o imposto das notas.' };
-  }
+  if (!config.backupBaseUrl || !config.backupApiKey) return { disponivel: false, calculando: false, motivo: motivoSemConfiguracao(config.backupBaseUrl, config.backupApiKey) };
   try {
     const qs = periodo ? `?de=${encodeURIComponent(periodo.de)}&ate=${encodeURIComponent(periodo.ate)}` : '';
     const res = await fetch(`${config.backupBaseUrl}/painel/api/impostos${qs}`, {
@@ -445,7 +452,9 @@ export async function refreshDiagnostico(): Promise<DiagnosticoCustos> {
  */
 export async function obterDiagnostico(forcar = false): Promise<DiagnosticoCustos> {
   if (forcar || !cache || !entradas) return refreshDiagnostico();
-  if (cache.impostos.calculando) cache = montar(await impostosComCache(true));
+  // v56: sem imposto (backup somando, fora do ar ou recusando), pergunta de novo ao backup. Barato: o
+  // resultado de falha fica 5 min em cache.
+  if (!cache.impostos.disponivel) cache = montar(await impostosComCache(cache.impostos.calculando));
   return cache;
 }
 
