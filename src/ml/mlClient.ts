@@ -193,16 +193,32 @@ export function extrairSku(item: any): { sku: string | null; origem: string | nu
   return { sku: null, origem: null };
 }
 
+/** Qual forma do multiget de SKU o ML aceitou da ultima vez (indice em `tentativas`). */
+let skuAttrsQueFunciona = 0;
+
 /** Multiget so dos campos onde o SKU pode estar. Devolve itemId -> sku + de onde veio. */
 export async function getItemsSkus(ids: string[]): Promise<Map<string, { sku: string | null; origem: string | null; title?: string }>> {
-  const attrs = 'id,title,seller_custom_field,attributes,variations';
+  // v53: o ML passou a recusar alguns campos no multiget ("Resource deprecated"). Se o pedido com
+  // todos os campos falhar, tenta de novo so com os atributos (SELLER_SKU) e, por ultimo, sem filtro.
+  const tentativas = ['id,title,seller_custom_field,attributes,variations', 'id,title,attributes,variations', null];
   const out = new Map<string, { sku: string | null; origem: string | null; title?: string }>();
 
   for (let i = 0; i < ids.length; i += 20) {
     const chunk = ids.slice(i, i + 20);
-    const data = await mlRequest<Array<{ code: number; body: any }>>(
-      `/items?ids=${chunk.join(',')}&attributes=${attrs}`,
-    );
+    let data: Array<{ code: number; body: any }> | undefined;
+    let ultimoErro: unknown = null;
+    for (let t = skuAttrsQueFunciona; t < tentativas.length; t++) {
+      const attrs = tentativas[t];
+      try {
+        data = await mlRequest<Array<{ code: number; body: any }>>(`/items?ids=${chunk.join(',')}${attrs ? `&attributes=${attrs}` : ''}`);
+        if (t !== skuAttrsQueFunciona) logger.warn(`[ML API] multiget de SKU caiu para a forma ${t} (${attrs ?? 'sem filtro'})`);
+        skuAttrsQueFunciona = t;
+        break;
+      } catch (err) {
+        ultimoErro = err;
+      }
+    }
+    if (!data) throw ultimoErro;
     for (const entry of data || []) {
       if (entry?.code === 200 && entry.body?.id) {
         const { sku, origem } = extrairSku(entry.body);
