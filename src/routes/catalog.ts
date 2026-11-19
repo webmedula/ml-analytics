@@ -8,7 +8,7 @@ import { calcularReposicao } from '../core/replenishmentScan';
 import { chaveSku, emparelhar, obterCustos } from '../core/custos';
 import { lacunasParaCsv, margemDaVenda } from '../core/margem';
 import { montarFila, resumirFila } from '../core/filaRecriacao';
-import { getMargem, refreshMargem } from '../core/margemScan';
+import { getMargem, obterSkusDosAnuncios, refreshMargem } from '../core/margemScan';
 import { obterDiagnostico } from '../core/diagnosticoCustos';
 import { lucroDaVenda, obterFichas } from '../core/lucro';
 import { chaveSku as chaveDoSku } from '../core/custos';
@@ -312,6 +312,21 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/compras', async (req) => {
     const q = req.query as Record<string, unknown>;
     return obterPlano(parametrosDaQuery(q), q.refresh === '1');
+  });
+
+  /** v53: SKU e titulo de cada anuncio ativo (sem custo, sem vendas). Leve; cache de 6h; ?refresh=1 recoleta. */
+  app.get('/api/skus', async (req, reply) => {
+    if (!getMlAuthStatus().authenticated) {
+      reply.code(409);
+      return { mensagem: 'Mercado Livre nao autorizado. Acesse /oauth/ml/login para conectar.' };
+    }
+    const { refresh } = req.query as { refresh?: string };
+    try {
+      return await obterSkusDosAnuncios(refresh === '1');
+    } catch (err: any) {
+      reply.code(500);
+      return { mensagem: err?.message || 'Erro ao ler o SKU dos anuncios' };
+    }
   });
 
   /** Margem + lacunas de cadastro, por anuncio. Serve o cache; ?refresh=1 força a varredura. */

@@ -21,15 +21,43 @@ export interface ResultadoMargem {
 
 let cache: ResultadoMargem | null = null;
 
+async function etapa<T>(nome: string, f: () => Promise<T>): Promise<T> {
+  try {
+    return await f();
+  } catch (err: any) {
+    const e = new Error(`${nome}: ${err?.message || err}`);
+    (e as any).status = err?.status;
+    throw e;
+  }
+}
+
+/**
+ * v53: SKU e titulo de cada anuncio ativo, sem custo e sem vendas. E o que o Gerente precisa para
+ * juntar anuncios do mesmo produto; nao depende do Tiny nem da busca de pedidos. Cache de 6h.
+ */
+export interface SkusDosAnuncios { atualizadoEm: string; anuncios: Array<{ itemId: string; sku: string | null; titulo: string }> }
+let skusCache: SkusDosAnuncios | null = null;
+const SEIS_HORAS = 6 * 60 * 60 * 1000;
+
+export async function obterSkusDosAnuncios(forcar = false, maxAnuncios = 500): Promise<SkusDosAnuncios> {
+  if (!forcar && skusCache && Date.now() - Date.parse(skusCache.atualizadoEm) < SEIS_HORAS) return skusCache;
+  const ids = await etapa('lista de anuncios do ML', () => getSellerItemIds(maxAnuncios, false));
+  const skus = await etapa('SKU dos anuncios no ML', () => getItemsSkus(ids));
+  skusCache = { atualizadoEm: new Date().toISOString(), anuncios: [...skus.entries()].map(([itemId, x]) => ({ itemId, sku: x.sku, titulo: x.title ?? '' })) };
+  return skusCache;
+}
+
 export function getMargem(): ResultadoMargem | null {
   return cache;
 }
 
 export async function refreshMargem(maxAnuncios = 500, dias = 30): Promise<ResultadoMargem> {
-  const ids = await getSellerItemIds(maxAnuncios, false);
-  const skus = await getItemsSkus(ids);
-  const custos = await obterCustos();
-  const { porItem } = await getSalesByItem(dias);
+  // v53: cada etapa diz o nome quando falha (antes vinha so a mensagem crua do ML, sem saber de onde).
+  const ids = await etapa('lista de anuncios do ML', () => getSellerItemIds(maxAnuncios, false));
+  const skus = await etapa('SKU dos anuncios no ML', () => getItemsSkus(ids));
+  skusCache = { atualizadoEm: new Date().toISOString(), anuncios: [...skus.entries()].map(([itemId, x]) => ({ itemId, sku: x.sku, titulo: x.title ?? '' })) };
+  const custos = await etapa('custo no Tiny', () => obterCustos());
+  const { porItem } = await etapa('vendas dos ultimos dias no ML', () => getSalesByItem(dias));
 
   const semCusto = new Set(custos.semCusto);
   const anuncios: LacunaDoAnuncio[] = [];
