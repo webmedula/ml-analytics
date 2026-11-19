@@ -2,6 +2,7 @@ import { config } from '../config';
 import { logger } from '../logger';
 import { getMlAuthStatus } from '../ml/mlOauthClient';
 import { chaveSku, obterCustos } from './custos';
+import { listarManuais, normalizarChave, type CustosManuais } from './custosManuais';
 import { impostosComCache, tabelaDeImpostos, type ImpostosDoBackup } from './diagnosticoCustos';
 import type { LacunaDoAnuncio } from './margem';
 import { getMargem, refreshMargem } from './margemScan';
@@ -23,6 +24,8 @@ export interface FichaDeLucro {
   custoUnitario: number | null;
   impostoPct: number | null;
   impostoOrigem: 'produto' | 'geral' | null;
+  /** v54: 'manual' quando o custo foi digitado no painel (vale mais que o Tiny) */
+  custoOrigem?: 'tiny' | 'manual' | null;
 }
 
 export interface Fichas {
@@ -46,28 +49,48 @@ export interface LucroDaVenda {
 
 const r2 = (n: number): number => Math.round(n * 100) / 100;
 
-/** Monta as fichas. PURA. */
+/**
+ * Monta as fichas. PURA. v54: custo digitado no painel vale mais que o Tiny. Custo manual de um ANUNCIO
+ * vira uma ficha propria com o id do anuncio como chave (porItem aponta para ela).
+ */
 export function montarFichas(
   anuncios: Pick<LacunaDoAnuncio, 'itemId' | 'sku'>[],
   custos: Record<string, number>,
   impostos: ImpostosDoBackup,
   agora = new Date(),
+  manuais: CustosManuais = {},
 ): Fichas {
   const dados = impostos.disponivel ? impostos.dados : null;
   const tabela = tabelaDeImpostos(dados);
   const porItem: Record<string, string> = {};
   const skus = new Set<string>(Object.keys(custos));
+  const manualSku: Record<string, number> = {};
+  const manualItem: Record<string, number> = {};
+  for (const m of Object.values(manuais)) {
+    if (m.tipo === 'sku') { manualSku[m.chave] = m.custo; skus.add(m.chave); }
+    else manualItem[m.chave] = m.custo;
+  }
+  const porSku: Record<string, FichaDeLucro> = {};
   for (const a of anuncios) {
     const k = chaveSku(a.sku);
+    const id = normalizarChave('anuncio', a.itemId);
+    if (id && manualItem[id] != null) {
+      const { pct, origem } = k ? tabela.pctDoSku(k) : tabela.pctGeral != null ? { pct: tabela.pctGeral, origem: 'geral' as const } : { pct: null, origem: null };
+      porItem[a.itemId] = id;
+      porSku[id] = { sku: id, custoUnitario: manualItem[id]!, impostoPct: pct, impostoOrigem: origem, custoOrigem: 'manual' };
+      if (k) skus.add(k);
+      continue;
+    }
     if (!k) continue;
     porItem[a.itemId] = k;
     skus.add(k);
   }
   for (const k of tabela.porSku.keys()) skus.add(k);
-  const porSku: Record<string, FichaDeLucro> = {};
   for (const k of skus) {
     const { pct, origem } = tabela.pctDoSku(k);
-    porSku[k] = { sku: k, custoUnitario: custos[k] ?? null, impostoPct: pct, impostoOrigem: origem };
+    const manual = manualSku[k];
+    const custo = manual ?? custos[k] ?? null;
+    porSku[k] = { sku: k, custoUnitario: custo, impostoPct: pct, impostoOrigem: origem, custoOrigem: manual != null ? 'manual' : custo != null ? 'tiny' : null };
   }
   return {
     atualizadoEm: agora.toISOString(),
@@ -143,7 +166,7 @@ export async function refreshFichas(): Promise<Fichas> {
   const idadeH = atual ? (Date.now() - new Date(atual.atualizadoEm).getTime()) / 3_600_000 : Infinity;
   const margem = atual && idadeH < 6 ? atual : await refreshMargem();
   const [custos, impostos] = await Promise.all([obterCustos(), impostosComCache()]);
-  fichas = montarFichas(margem.anuncios, custos.custos, impostos);
+  fichas = montarFichas(margem.anuncios, custos.custos, impostos, new Date(), listarManuais());
   logger.info(`[LUCRO] ${Object.keys(fichas.porSku).length} ficha(s); imposto ${fichas.imposto.disponivel ? `${fichas.imposto.percentualGeral}% geral` : 'indisponivel'}.`);
   return fichas;
 }

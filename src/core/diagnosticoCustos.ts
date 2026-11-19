@@ -3,7 +3,9 @@ import { logger } from '../logger';
 import { listarProdutos, type ProdutoNormalizado } from '../tiny/tinyClient';
 import { chaveSku } from './custos';
 import type { EstadoDeCusto, LacunaDoAnuncio } from './margem';
-import { getMargem, refreshMargem, type ResultadoMargem } from './margemScan';
+import { getMargem, reaplicarCustosManuais, refreshMargem, type ResultadoMargem } from './margemScan';
+import { buscarDetalhes, type DetalheDoAnuncio } from './anunciosDetalhe';
+import { listarManuais, type CustoManual, type CustosManuais } from './custosManuais';
 
 /**
  * DIAGNOSTICO DE CUSTOS (v50) — etapa 1 da analise de custos da MCS.
@@ -14,7 +16,7 @@ import { getMargem, refreshMargem, type ResultadoMargem } from './margemScan';
  *  - kits sem custo;
  *  - o imposto que saiu DE FATO nas vendas, por produto (lido das notas guardadas no backup);
  *  - o custo do Tiny ao lado do custo da ultima nota de importacao;
- *  - os 30 produtos que mais faturam, com custo, imposto e margem, pra conferir a olho.
+ *  - os 50 anuncios que mais faturam (v54: por anuncio), com custo, imposto, margem e o "Voce recebe" do ML.
  *
  * A MCS revende produtos importados pela propria empresa; o custo digitado no Tiny ja inclui frete,
  * impostos de importacao e despacho. Por isso a nota de importacao serve de CONFERENCIA, nao de fonte.
@@ -57,26 +59,35 @@ export type ImpostosDoBackup =
 
 // ---------- resultado ----------
 
+/** v54: uma linha por ANUNCIO (antes era por SKU, e varios anuncios do mesmo produto ficavam misturados). */
 export interface LinhaTop {
-  sku: string;
+  itemId: string;
+  sku: string | null;
   titulo: string;
-  anuncios: number;
+  /** quantos anuncios vendem o mesmo SKU na janela (1 = so este) */
+  anunciosDoSku: number;
   unidades: number;
   bruto: number;
   /** bruto - comissao - frete (o mesmo liquido da aba Desempenho). */
   liquido: number;
   estado: EstadoDeCusto;
   custoUnitario: number | null;
+  /** 'manual' = digitado no painel (vale mais que o Tiny) */
+  custoOrigem: 'tiny' | 'manual' | null;
   custoMercadoria: number | null;
   /** % de imposto usado: o do produto quando ha venda suficiente nas notas; senao o geral. */
   impostoPct: number | null;
   impostoOrigem: 'produto' | 'geral' | null;
   impostoEstimado: number | null;
+  /** liquido - mercadoria (antes do imposto). Sem custo fica null. */
+  margemAntesDoImposto: number | null;
   /** liquido - mercadoria - imposto. Sem custo (ou sem imposto conhecido) fica null: "nao sei", nunca zero. */
   margem: number | null;
   margemPct: number | null;
   custoNotaImportacao: number | null;
   diferencaImportacaoPct: number | null;
+  /** dados da linha do anuncio na Gestao de anuncios do ML ("Voce recebe" etc.); null se nao lidos */
+  ml: DetalheDoAnuncio | null;
 }
 
 export interface DiagnosticoCustos {
@@ -112,6 +123,8 @@ export interface DiagnosticoCustos {
     observacao: string | null;
   };
   top: LinhaTop[];
+  /** v54: custos digitados no painel */
+  manuais: CustoManual[];
   /** Frases curtas com o que o diagnostico achou, na ordem em que vale agir. */
   achados: string[];
 }
@@ -122,6 +135,8 @@ const brl = (n: number): string => 'R$ ' + r2(n).toLocaleString('pt-BR', { minim
 /** Diferenca de b em relacao a a, em %. */
 const difPct = (a: number, b: number): number => r1(((b - a) / a) * 100);
 const pct = (n: number): string => `${String(n).replace('.', ',')}%`;
+/** Anuncios na tabela dos que mais faturam. */
+const TOP_N = 50;
 
 /** Faturamento minimo do produto nas notas pra usar o % de imposto dele em vez do geral. */
 const MIN_VENDA_PARA_PCT_PROPRIO = 300;
@@ -159,10 +174,10 @@ export function montarDiagnostico(
   margem: Pick<ResultadoMargem, 'janelaDias' | 'resumo' | 'anuncios'>,
   produtos: ProdutoNormalizado[],
   impostos: ImpostosDoBackup,
-  opcoes: { divergenciaPct: number; topN?: number; agora?: Date },
+  opcoes: { divergenciaPct: number; topN?: number; agora?: Date; detalhes?: Map<string, DetalheDoAnuncio>; manuais?: CustosManuais },
 ): DiagnosticoCustos {
   const lim = opcoes.divergenciaPct;
-  const topN = opcoes.topN ?? 30;
+  const topN = opcoes.topN ?? TOP_N;
 
   // --- faturamento por SKU (varios anuncios podem vender o mesmo produto) ---
   interface PorSku { sku: string; titulo: string; anuncios: number; unidades: number; bruto: number; liquido: number; estado: EstadoDeCusto; custo: number | null }
@@ -227,34 +242,43 @@ export function montarDiagnostico(
   }
   divergentes.sort((a, b) => b.liquido - a.liquido || Math.abs(b.diferencaPct) - Math.abs(a.diferencaPct));
 
-  // --- top N por faturamento liquido ---
-  const top: LinhaTop[] = [...porSku.values()]
-    .sort((a, b) => b.liquido - a.liquido)
+  // --- top N anuncios por faturamento liquido (v54: por anuncio, com o SKU junto) ---
+  const top: LinhaTop[] = [...margem.anuncios]
+    .filter((a) => (a.liquido || 0) > 0 || (a.unidades || 0) > 0)
+    .sort((a, b) => (b.liquido || 0) - (a.liquido || 0))
     .slice(0, topN)
-    .map((s) => {
-      const custoMercadoria = s.custo != null ? r2(s.custo * s.unidades) : null;
-      const { pct, origem } = pctDoSku(s.sku);
-      const impostoEstimado = pct != null ? r2((s.bruto * pct) / 100) : null;
-      const margemV = custoMercadoria != null && impostoEstimado != null ? r2(s.liquido - custoMercadoria - impostoEstimado) : null;
-      const imp = importSku.get(s.sku);
+    .map((a) => {
+      const k = chaveSku(a.sku);
+      const bruto = a.bruto || 0, liquido = a.liquido || 0, unidades = a.unidades || 0;
+      const custo = a.custo ?? null;
+      const custoMercadoria = custo != null ? r2(custo * unidades) : null;
+      const { pct, origem } = k ? pctDoSku(k) : pctGeral != null ? { pct: pctGeral, origem: 'geral' as const } : { pct: null, origem: null };
+      const impostoEstimado = pct != null ? r2((bruto * pct) / 100) : null;
+      const antes = custoMercadoria != null ? r2(liquido - custoMercadoria) : null;
+      const margemV = antes != null && impostoEstimado != null ? r2(antes - impostoEstimado) : null;
+      const imp = k ? importSku.get(k) : undefined;
       const custoNota = imp?.custoPorUnidade != null ? r2(imp.custoPorUnidade) : null;
       return {
-        sku: s.sku,
-        titulo: s.titulo,
-        anuncios: s.anuncios,
-        unidades: s.unidades,
-        bruto: r2(s.bruto),
-        liquido: r2(s.liquido),
-        estado: s.estado,
-        custoUnitario: s.custo,
+        itemId: a.itemId,
+        sku: k,
+        titulo: a.titulo,
+        anunciosDoSku: k ? porSku.get(k)?.anuncios ?? 1 : 1,
+        unidades,
+        bruto: r2(bruto),
+        liquido: r2(liquido),
+        estado: a.estado,
+        custoUnitario: custo,
+        custoOrigem: a.custoOrigem ?? (custo != null ? 'tiny' : null),
         custoMercadoria,
         impostoPct: pct,
         impostoOrigem: origem,
         impostoEstimado,
+        margemAntesDoImposto: antes,
         margem: margemV,
-        margemPct: margemV != null && s.bruto > 0 ? r1((margemV / s.bruto) * 100) : null,
+        margemPct: margemV != null && bruto > 0 ? r1((margemV / bruto) * 100) : null,
         custoNotaImportacao: custoNota,
-        diferencaImportacaoPct: custoNota != null && s.custo ? difPct(s.custo, custoNota) : null,
+        diferencaImportacaoPct: custoNota != null && custo ? difPct(custo, custoNota) : null,
+        ml: opcoes.detalhes?.get(a.itemId) ?? null,
       };
     });
 
@@ -271,6 +295,8 @@ export function montarDiagnostico(
     if (res.liquidoPorEstado.sem_sku > 0) partes.push(`${brl(res.liquidoPorEstado.sem_sku)} em anúncios sem SKU`);
     achados.push(`Faturamento sem custo: ${partes.join('; ')}.`);
   }
+  const nManuais = Object.keys(opcoes.manuais ?? {}).length;
+  if (nManuais) achados.push(`${nManuais} custo(s) digitado(s) aqui no painel valem no lugar do Tiny.`);
   if (divergentes.length) achados.push(`${divergentes.length} produto(s) com o custo do Tiny ${lim}% ou mais longe do custo da nota de importação. Pode ser lote novo sem atualizar o Tiny, ou despesas que a nota não tem.`);
   if (semCustoNoTinyComNota.length) achados.push(`${semCustoNoTinyComNota.length} produto(s) têm nota de importação mas estão sem custo no Tiny: o custo da nota serve de ponto de partida.`);
   if (divergenciasTiny.length) achados.push(`${divergenciasTiny.length} produto(s) com preço de custo e custo médio do Tiny diferentes em ${lim}% ou mais.`);
@@ -312,6 +338,7 @@ export function montarDiagnostico(
       observacao: dados?.importacoes.observacao ?? null,
     },
     top,
+    manuais: Object.values(opcoes.manuais ?? {}).sort((a, b) => b.em.localeCompare(a.em)),
     achados: achados.filter(Boolean),
   };
 }
@@ -354,20 +381,28 @@ export async function impostosComCache(forcar = false): Promise<ImpostosDoBackup
 
 let cache: DiagnosticoCustos | null = null;
 /** O que entrou no ultimo diagnostico: refazer so a parte do backup nao precisa varrer ML e Tiny de novo. */
-let entradas: { margem: ResultadoMargem; produtos: ProdutoNormalizado[] } | null = null;
+let entradas: { margem: ResultadoMargem; produtos: ProdutoNormalizado[]; detalhes: Map<string, DetalheDoAnuncio> } | null = null;
 
 export function getDiagnostico(): DiagnosticoCustos | null {
   return cache;
 }
 
-/** Refaz o diagnostico: margem (cache de ate 6 h, senao varre), catalogo do Tiny e impostos do backup. */
+const idsDoTop = (m: ResultadoMargem): string[] =>
+  [...m.anuncios].filter((a) => (a.liquido || 0) > 0 || (a.unidades || 0) > 0).sort((a, b) => (b.liquido || 0) - (a.liquido || 0)).slice(0, TOP_N).map((a) => a.itemId);
+
+function montar(impostos: ImpostosDoBackup): DiagnosticoCustos {
+  return montarDiagnostico(entradas!.margem, entradas!.produtos, impostos, { divergenciaPct: config.custoDivergenciaPct, detalhes: entradas!.detalhes, manuais: listarManuais() });
+}
+
+/** Refaz o diagnostico: margem (cache de ate 6 h, senao varre), catalogo do Tiny, impostos do backup e os dados dos anuncios no ML. */
 export async function refreshDiagnostico(): Promise<DiagnosticoCustos> {
   const atual = getMargem();
   const idadeH = atual ? (Date.now() - new Date(atual.atualizadoEm).getTime()) / 3_600_000 : Infinity;
   const margem = atual && idadeH < 6 ? atual : await refreshMargem();
-  const [produtos, impostos] = await Promise.all([listarProdutos(5000), impostosComCache(true)]);
-  entradas = { margem, produtos };
-  cache = montarDiagnostico(margem, produtos, impostos, { divergenciaPct: config.custoDivergenciaPct });
+  const vendas7 = new Map(margem.anuncios.map((a) => [a.itemId, a.unidadesD7 ?? 0]));
+  const [produtos, impostos, detalhes] = await Promise.all([listarProdutos(5000), impostosComCache(true), buscarDetalhes(idsDoTop(margem), vendas7)]);
+  entradas = { margem, produtos, detalhes };
+  cache = montar(impostos);
   logger.info(`[CUSTOS] diagnostico: ${cache.cobertura.coberturaPorFaturamento}% do faturamento com custo; impostos ${cache.impostos.disponivel ? 'ok' : 'indisponivel'}.`);
   return cache;
 }
@@ -378,9 +413,15 @@ export async function refreshDiagnostico(): Promise<DiagnosticoCustos> {
  */
 export async function obterDiagnostico(forcar = false): Promise<DiagnosticoCustos> {
   if (forcar || !cache || !entradas) return refreshDiagnostico();
-  if (cache.impostos.calculando) {
-    const impostos = await impostosComCache(true);
-    cache = montarDiagnostico(entradas.margem, entradas.produtos, impostos, { divergenciaPct: config.custoDivergenciaPct });
-  }
+  if (cache.impostos.calculando) cache = montar(await impostosComCache(true));
+  return cache;
+}
+
+/** v54: depois de mudar um custo manual, remonta com o que ja tinha (sem ir ao ML nem ao Tiny). */
+export async function remontarComCustosManuais(): Promise<DiagnosticoCustos | null> {
+  const m = reaplicarCustosManuais();
+  if (!entradas || !m) return null;
+  entradas = { ...entradas, margem: m };
+  cache = montar(await impostosComCache());
   return cache;
 }

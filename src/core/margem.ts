@@ -1,4 +1,5 @@
 import { chaveSku } from './custos';
+import { custoManualDe, type CustosManuais } from './custosManuais';
 
 /**
  * ESTADO DO CUSTO DE UM ANUNCIO.
@@ -27,6 +28,24 @@ export interface LacunaDoAnuncio {
   unidades: number;
   /** v50: faturamento bruto na janela (preco x unidades), base do imposto estimado. */
   bruto?: number;
+  /** v54: de onde veio o custo: Tiny ou digitado no painel. */
+  custoOrigem?: 'tiny' | 'manual' | null;
+  /** v54: o que o Tiny diz, guardado para voltar a ele quando o custo manual e apagado. */
+  estadoTiny?: EstadoDeCusto;
+  custoTiny?: number | null;
+  /** v54: unidades vendidas nos ultimos 7 dias */
+  unidadesD7?: number;
+}
+
+/**
+ * v54: aplica o custo digitado no painel por cima do Tiny. PURA. Sem custo manual, volta ao que o Tiny diz.
+ */
+export function comCustoManual<T extends LacunaDoAnuncio>(a: T, manuais: CustosManuais): T {
+  const estadoTiny = a.estadoTiny ?? a.estado;
+  const custoTiny = a.custoTiny !== undefined ? a.custoTiny : a.custo;
+  const m = custoManualDe(manuais, a.itemId, a.sku);
+  if (m) return { ...a, estadoTiny, custoTiny, estado: 'com_custo', custo: m.custo, custoOrigem: 'manual' };
+  return { ...a, estadoTiny, custoTiny, estado: estadoTiny, custo: custoTiny, custoOrigem: custoTiny != null ? 'tiny' : null };
 }
 
 /**

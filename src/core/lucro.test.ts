@@ -27,8 +27,8 @@ describe('fichas de lucro', () => {
 
   it('uma ficha por SKU: custo do Tiny e % de imposto do produto (ou o geral)', () => {
     expect(fichas.porItem).toEqual({ MLB1: 'RL-1', MLB2: 'FA-2' });
-    expect(fichas.porSku['RL-1']).toEqual({ sku: 'RL-1', custoUnitario: 30, impostoPct: 20, impostoOrigem: 'produto' });
-    expect(fichas.porSku['FA-2']).toEqual({ sku: 'FA-2', custoUnitario: null, impostoPct: 10, impostoOrigem: 'geral' });
+    expect(fichas.porSku['RL-1']).toEqual({ sku: 'RL-1', custoUnitario: 30, impostoPct: 20, impostoOrigem: 'produto', custoOrigem: 'tiny' });
+    expect(fichas.porSku['FA-2']).toEqual({ sku: 'FA-2', custoUnitario: null, impostoPct: 10, impostoOrigem: 'geral', custoOrigem: null });
     expect(fichas.porSku['OK-3']!.custoUnitario).toBe(5);
     expect(fichas.imposto).toMatchObject({ disponivel: true, percentualGeral: 10 });
   });
@@ -62,5 +62,19 @@ describe('fichas de lucro', () => {
     expect(todas.resumoEmTexto).toContain('PREJUÍZO');
     const so: any = filtrarPromocoes({ apenas_prejuizo: true }, r, Date.now(), fichas);
     expect(so.total).toBe(1);
+  });
+
+  it('custo digitado no painel vale mais que o Tiny (por SKU e por anúncio)', () => {
+    const manuais = {
+      'sku:FA-2': { tipo: 'sku' as const, chave: 'FA-2', custo: 44, obs: null, em: '' },
+      'sku:RL-1': { tipo: 'sku' as const, chave: 'RL-1', custo: 31, obs: null, em: '' },
+      'anuncio:MLB3': { tipo: 'anuncio' as const, chave: 'MLB3', custo: 12, obs: null, em: '' },
+    };
+    const f = montarFichas([{ itemId: 'MLB1', sku: 'rl-1' }, { itemId: 'MLB2', sku: 'FA-2' }, { itemId: 'MLB3', sku: null }], { 'RL-1': 30 }, impostos, new Date(), manuais);
+    expect(f.porSku['RL-1']).toMatchObject({ custoUnitario: 31, custoOrigem: 'manual' });
+    expect(f.porSku['FA-2']).toMatchObject({ custoUnitario: 44, custoOrigem: 'manual', impostoPct: 10 });
+    // anúncio sem SKU com custo próprio: ganha ficha pelo id do anúncio, com o imposto geral
+    expect(f.porItem.MLB3).toBe('MLB3');
+    expect(f.porSku.MLB3).toEqual({ sku: 'MLB3', custoUnitario: 12, impostoPct: 10, impostoOrigem: 'geral', custoOrigem: 'manual' });
   });
 });

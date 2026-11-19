@@ -9,8 +9,9 @@ import { chaveSku, emparelhar, obterCustos } from '../core/custos';
 import { lacunasParaCsv, margemDaVenda } from '../core/margem';
 import { montarFila, resumirFila } from '../core/filaRecriacao';
 import { getMargem, obterSkusDosAnuncios, refreshMargem } from '../core/margemScan';
-import { obterDiagnostico } from '../core/diagnosticoCustos';
-import { lucroDaVenda, obterFichas } from '../core/lucro';
+import { obterDiagnostico, remontarComCustosManuais } from '../core/diagnosticoCustos';
+import { lerReais, listarManuais, removerManual, salvarManual } from '../core/custosManuais';
+import { lucroDaVenda, obterFichas, refreshFichas } from '../core/lucro';
 import { chaveSku as chaveDoSku } from '../core/custos';
 import { obterPlano, parametrosDaQuery } from '../core/compras';
 import { montarIndice, sugerirCorrespondencia } from '../core/skuMatch';
@@ -270,6 +271,31 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
       reply.code(500);
       return { mensagem: err?.message || 'Erro ao montar o diagnostico de custos' };
     }
+  });
+
+  /** v54: custos digitados no painel (valem mais que o Tiny; o Tiny nao e alterado). */
+  app.get('/api/custos/manuais', async () => ({ manuais: Object.values(listarManuais()) }));
+
+  /** v54: grava um custo manual. Corpo: { tipo: 'sku' | 'anuncio', chave, custo, obs? }. */
+  app.post('/api/custos/manual', async (req, reply) => {
+    const b = (req.body ?? {}) as { tipo?: string; chave?: string; custo?: unknown; obs?: string };
+    const tipo = b.tipo === 'anuncio' ? 'anuncio' : 'sku';
+    const custo = lerReais(b.custo);
+    try {
+      const salvo = salvarManual(tipo, String(b.chave ?? ''), custo, b.obs ?? null);
+      return { salvo, diagnostico: await depoisDeMudarCusto() };
+    } catch (err: any) {
+      reply.code(400);
+      return { mensagem: err?.message || 'Nao foi possivel gravar o custo.' };
+    }
+  });
+
+  /** v54: apaga um custo manual (volta a valer o do Tiny). Corpo: { tipo, chave }. */
+  app.post('/api/custos/manual/remover', async (req, reply) => {
+    const b = (req.body ?? {}) as { tipo?: string; chave?: string };
+    const ok = removerManual(b.tipo === 'anuncio' ? 'anuncio' : 'sku', String(b.chave ?? ''));
+    if (!ok) { reply.code(404); return { mensagem: 'Esse custo manual nao existe.' }; }
+    return { removido: true, diagnostico: await depoisDeMudarCusto() };
   });
 
   /**
@@ -561,4 +587,11 @@ export async function catalogRoutes(app: FastifyInstance): Promise<void> {
       return { mensagem: err?.message || 'Erro no diagnostico' };
     }
   });
+}
+
+/** v54: custo manual mudou: remonta o diagnostico e as fichas de lucro (promocoes, Gerente, Central). */
+async function depoisDeMudarCusto(): Promise<unknown> {
+  const d = await remontarComCustosManuais().catch(() => null);
+  refreshFichas().catch(() => undefined);
+  return d;
 }

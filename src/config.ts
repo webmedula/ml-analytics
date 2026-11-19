@@ -11,7 +11,7 @@ function inteiroPositivo(v: string | undefined, padrao: number): number {
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v53 (2026-11-19)',
+  appVersion: 'analytics v54 (2026-11-19)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
