@@ -799,18 +799,21 @@ function renderCustos() {
 
   // v54: uma linha por anúncio (o SKU aparece junto), com os dados da Gestão de anúncios do ML e o custo editável
   const semImposto = !im.disponivel || im.percentualGeral == null;
-  h += sec('Os ' + d.top.length + ' anúncios que mais faturam', 'Uma linha por anúncio. "Você recebe" é o que o ML deposita por venda hoje (preço − tarifa − frete), como na Gestão de anúncios. Margem = líquido − mercadoria' + (semImposto ? ' (ainda sem o imposto, que está indisponível)' : ' − imposto') + '. Clique no custo para digitar um custo que vale no lugar do Tiny. "—" quer dizer que falta dado, não que é zero.');
+  h += sec('Os ' + d.top.length + ' anúncios que mais faturam', 'Uma linha por anúncio. "Você recebe" é o que o ML deposita por venda hoje (preço − tarifa − frete), como na Gestão de anúncios. Margem / venda = quanto sobra em cada venda hoje: você recebe − custo' + (semImposto ? ' (ainda sem o imposto, que está indisponível)' : ' − imposto') + '; embaixo, o total dos 30 dias. Margem % = margem ÷ preço de venda. * = média dos 30 dias, quando falta o dado de hoje do ML. Clique no custo para digitar um custo que vale no lugar do Tiny. "—" quer dizer que falta dado, não que é zero.');
   h += '<label class="muted" style="display:inline-block;margin:6px 0"><input type="checkbox" id="cstSoSemCusto"' + (custosSoSemCusto ? ' checked' : '') + ' onchange="custosSoSemCusto=this.checked;renderCustos()"> só os sem custo</label>';
   const linhasTop = d.top.filter(t => !custosSoSemCusto || t.custoUnitario == null);
-  h += tabela('<th>Anúncio</th><th class="num">Un. 30d</th><th class="num">Bruto</th><th class="num">Líquido</th><th class="num">Preço</th><th class="num">Você recebe</th><th class="num">Custo un.</th><th class="num">Margem</th><th class="num">Margem %</th><th class="num">7 dias</th><th class="num">Estoque</th><th class="num">Qualidade</th>',
+  h += tabela('<th>Anúncio</th><th class="num">Un. 30d</th><th class="num">Bruto</th><th class="num">Líquido</th><th class="num">Preço</th><th class="num">Você recebe</th><th class="num">Custo un.</th><th class="num">Margem / venda</th><th class="num">Margem %</th><th class="num">7 dias</th><th class="num">Estoque</th><th class="num">Qualidade</th>',
     linhasTop.map(t => {
       const m = t.ml || {};
       const titulo = m.permalink ? '<a href="' + esc(m.permalink) + '" target="_blank" rel="noopener">' + esc(t.titulo) + '</a>' : esc(t.titulo);
       const sub = [t.itemId, m.tipoRotulo, t.anunciosDoSku > 1 ? t.anunciosDoSku + ' anúncios com este SKU' : null].filter(Boolean).join(' · ');
       const custo = t.custoUnitario == null ? '<span class="tag perdendo">sem custo</span>' : fmtMoney(t.custoUnitario) + (t.custoOrigem === 'manual' ? ' <span class="tag motivo">manual</span>' : '');
-      const margem = t.margem != null ? t.margem : t.margemAntesDoImposto;
-      const margemPct = t.margemPct != null ? t.margemPct : (t.margemAntesDoImposto != null && t.bruto > 0 ? Math.round(t.margemAntesDoImposto / t.bruto * 1000) / 10 : null);
-      const corM = margem == null ? '' : (margem < 0 ? ' style="color:var(--red)"' : '');
+      // v55: margem de cada venda (você recebe − custo − imposto); o total dos 30 dias vai embaixo, menor
+      const total = t.margem != null ? t.margem : t.margemAntesDoImposto;
+      const mu = t.margemUnitaria;
+      const corM = mu == null ? '' : (mu < 0 ? ' style="color:var(--red)"' : '');
+      const margemCel = mu == null ? '—' : '<b>' + fmtMoney(mu) + '</b>' + (t.margemUnitariaBase === 'media30' ? ' <span class="muted" title="média dos 30 dias (sem os dados de hoje do ML)">*</span>' : '') +
+        (total != null ? '<br><span class="muted" style="font-size:11px">' + fmtMoney(total) + ' em 30d</span>' : '');
       const preco = m.preco == null ? '—' : (m.precoPromocao != null ? '<s class="muted">' + fmtMoney(m.preco) + '</s><br>' + fmtMoney(m.precoPromocao) : fmtMoney(m.preco));
       const recebe = m.voceRecebe == null ? '—' : '<b>' + fmtMoney(m.voceRecebe) + '</b><br><span class="muted" style="font-size:11px">tarifa ' + fmtMoney(m.tarifa) + (m.freteGratis === false ? ' · frete do comprador' : ' · frete ' + fmtMoney(m.frete)) + '</span>';
       const sete = m.visitas7 == null && m.vendas7 == null ? '—' : (m.visitas7 ?? '—') + ' vis.<br>' + (m.vendas7 ?? '—') + ' vend. · ' + fmtPct(m.conversao7);
@@ -818,7 +821,7 @@ function renderCustos() {
         '<td class="num">' + t.unidades + '</td><td class="num">' + fmtMoney(t.bruto) + '</td><td class="num">' + fmtMoney(t.liquido) + '</td>' +
         '<td class="num">' + preco + '</td><td class="num">' + recebe + '</td>' +
         '<td class="num"><a href="#" title="Digitar o custo" onclick="abrirCustoManual(\'' + esc(t.itemId) + '\'); return false">' + custo + ' ✏️</a></td>' +
-        '<td class="num"' + corM + '>' + fmtMoney(margem) + '</td><td class="num"' + corM + '>' + fmtPct(margemPct) + '</td>' +
+        '<td class="num"' + corM + '>' + margemCel + '</td><td class="num"' + corM + '>' + fmtPct(t.margemUnitariaPct) + '</td>' +
         '<td class="num" style="font-size:12px">' + sete + '</td><td class="num">' + (m.estoque ?? '—') + '</td><td class="num">' + (m.qualidade == null ? '—' : m.qualidade) + '</td></tr>' +
         '<tr id="cm-' + esc(t.itemId) + '" style="display:none"><td colspan="12">' + formCustoManual(t) + '</td></tr>';
     }), custosSoSemCusto ? 'Todos os anúncios da lista têm custo.' : 'Nenhuma venda na janela.');

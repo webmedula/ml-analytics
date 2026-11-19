@@ -86,6 +86,16 @@ export interface LinhaTop {
   margemPct: number | null;
   custoNotaImportacao: number | null;
   diferencaImportacaoPct: number | null;
+  /**
+   * v55: quanto sobra em CADA venda. Com os dados do ML: "voce recebe" de hoje − custo − imposto sobre o preco
+   * de hoje (base 'hoje'). Sem eles: media dos 30 dias, liquido ÷ unidades − custo − imposto (base 'media30').
+   * Sem imposto conhecido sai antes do imposto (comImposto false). Sem custo: null.
+   */
+  margemUnitaria: number | null;
+  /** margem unitaria ÷ preco de venda, em % */
+  margemUnitariaPct: number | null;
+  margemUnitariaBase: 'hoje' | 'media30' | null;
+  margemUnitariaComImposto: boolean;
   /** dados da linha do anuncio na Gestao de anuncios do ML ("Voce recebe" etc.); null se nao lidos */
   ml: DetalheDoAnuncio | null;
 }
@@ -165,6 +175,25 @@ export function tabelaDeImpostos(dados: RespostaImpostosBackup | null): TabelaDe
     return pctGeral != null ? { pct: pctGeral, origem: 'geral' } : { pct: null, origem: null };
   };
   return { simples, pctGeral, porSku, pctDoSku };
+}
+
+/** v55: margem de UMA venda do anuncio (ver LinhaTop.margemUnitaria). PURA. */
+export function margemPorUnidade(
+  custo: number | null,
+  impostoPct: number | null,
+  ml: Pick<DetalheDoAnuncio, 'voceRecebe' | 'preco' | 'precoPromocao'> | null,
+  liquido: number,
+  bruto: number,
+  unidades: number,
+): Pick<LinhaTop, 'margemUnitaria' | 'margemUnitariaPct' | 'margemUnitariaBase' | 'margemUnitariaComImposto'> {
+  const precoHoje = ml ? ml.precoPromocao ?? ml.preco : null;
+  let base: 'hoje' | 'media30' | null = null, recebe: number | null = null, preco: number | null = null;
+  if (ml?.voceRecebe != null && precoHoje != null) { base = 'hoje'; recebe = ml.voceRecebe; preco = precoHoje; }
+  else if (unidades > 0) { base = 'media30'; recebe = liquido / unidades; preco = bruto / unidades; }
+  if (custo == null || recebe == null || preco == null) return { margemUnitaria: null, margemUnitariaPct: null, margemUnitariaBase: base, margemUnitariaComImposto: impostoPct != null };
+  const imposto = impostoPct != null ? (preco * impostoPct) / 100 : 0;
+  const m = r2(recebe - custo - imposto);
+  return { margemUnitaria: m, margemUnitariaPct: preco > 0 ? r1((m / preco) * 100) : null, margemUnitariaBase: base, margemUnitariaComImposto: impostoPct != null };
 }
 
 /**
@@ -258,6 +287,8 @@ export function montarDiagnostico(
       const margemV = antes != null && impostoEstimado != null ? r2(antes - impostoEstimado) : null;
       const imp = k ? importSku.get(k) : undefined;
       const custoNota = imp?.custoPorUnidade != null ? r2(imp.custoPorUnidade) : null;
+      const ml = opcoes.detalhes?.get(a.itemId) ?? null;
+      const unit = margemPorUnidade(custo, pct, ml, liquido, bruto, unidades);
       return {
         itemId: a.itemId,
         sku: k,
@@ -278,7 +309,8 @@ export function montarDiagnostico(
         margemPct: margemV != null && bruto > 0 ? r1((margemV / bruto) * 100) : null,
         custoNotaImportacao: custoNota,
         diferencaImportacaoPct: custoNota != null && custo ? difPct(custo, custoNota) : null,
-        ml: opcoes.detalhes?.get(a.itemId) ?? null,
+        ...unit,
+        ml,
       };
     });
 
