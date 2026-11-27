@@ -11,6 +11,7 @@ import { telegramRoutes } from './routes/telegram';
 import { dadosRoutes } from './routes/dados';
 import { assistenteRoutes } from './routes/assistente';
 import { promocoesRoutes } from './routes/promocoes';
+import { mercadoRoutes } from './routes/mercado';
 
 export function buildServer() {
   const app = Fastify({ logger: false });
@@ -79,6 +80,7 @@ export function buildServer() {
   app.register(assistenteRoutes);
   // v35: propostas de promocao do ML (leitura).
   app.register(promocoesRoutes);
+  app.register(mercadoRoutes);
 
   app.setErrorHandler((err, _req, reply) => {
     logger.error('Erro nao tratado:', err.message, err.stack);

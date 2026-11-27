@@ -1,5 +1,13 @@
 # tiny-analytics
 
+> **v57 (2026-11-27):** **Mercado do ML** (fora dos nossos anúncios), para o Gerente IA. Ferramentas novas: `mercado_mais_vendidos`
+> (os 20 mais vendidos de uma categoria, por id ou nome, marcando o que é nosso), `mercado_tendencias` (o que estão buscando na
+> semana), `mercado_concorrencia` (todos os vendedores e preços de um produto de catálogo, comparados com o nosso),
+> `mercado_busca` (busca normal; se o ML recusar, cai para o catálogo) e `mercado_radar` (compara a foto desta semana com a
+> anterior). A foto das categorias com mais anúncios da MCS (`MERCADO_MAX_CATEGORIAS`, padrão 8) é tirada toda segunda a partir
+> das 6h de Brasília e guardada em `data/mercado-fotos.json` (`MERCADO_FOTOS_RETENCAO`, padrão 26). O ML não informa quantas
+> unidades o concorrente vendeu. Teste: `/debug/mercado?key=...` (resposta crua de cada rota do ML) e `/debug/mercado/radar?key=...&foto=1`.
+
 > **v56 (2026-11-19):** Configuração do backup mais tolerante: `BACKUP_BASE_URL` (ou `BACKUP_URL`) e `BACKUP_API_KEY` (ou `BACKUP_PANEL_API_KEY`/`PANEL_API_KEY`) são lidas sem espaços nem aspas em volta, e a URL ganha `https://` se faltar. O `/health` mostra se o serviço enxerga as duas (`backup.url`, `backup.chaveConfigurada`, sem mostrar a chave). O aviso da aba Custos diz qual variável falta e lembra que mudar o ambiente pede novo deploy. Sem imposto, a aba pergunta de novo ao backup ao abrir (antes ficava presa no primeiro resultado até "Refazer agora").
 
 > **v55 (2026-11-19):** Aba Custos: a margem passa a ser **por venda** ("Margem / venda" = você recebe hoje − custo − imposto sobre o preço de hoje; sem os dados do ML, a média dos 30 dias, marcada com *), e Margem % = margem ÷ preço de venda. O total dos 30 dias fica embaixo, menor. Campos novos na linha: `margemUnitaria`, `margemUnitariaPct`, `margemUnitariaBase`, `margemUnitariaComImposto`.
