@@ -10,6 +10,7 @@ import { serieDoAnuncio, vendasPorDia, variacao } from '../core/history';
 import { consultar, descreverEsquema } from '../db/banco';
 import { filtrarPromocoes } from '../core/promocoesConsulta';
 import { promocoesVencendo } from '../core/promocoesAcompanhamentoConsulta';
+import { consultaBusca, consultaConcorrencia, consultaMaisVendidos, consultaRadar, consultaTendencias } from '../core/mercado';
 
 /**
  * FERRAMENTAS DO ASSISTENTE.
@@ -207,6 +208,56 @@ export const FERRAMENTAS: DefinicaoDeFerramenta[] = [
         limite: { type: 'integer', description: 'itens por lista, 1 a 30, padrao 10' },
       },
     },
+  },
+  {
+    name: 'mercado_mais_vendidos',
+    description:
+      'MERCADO (fora dos nossos anuncios): os 20 mais vendidos de uma categoria do Mercado Livre, na ordem da lista ' +
+      'de mais vendidos do ML, com titulo, preco e nosso=true quando o produto e da MCS. categoria aceita o id (MLB1234) ' +
+      'ou um nome/produto em texto ("luminaria de led"), que o ML converte na categoria. Sem categoria, devolve as ' +
+      'categorias em que a MCS mais anuncia. O ML NAO informa quantas unidades cada um vendeu.',
+    input_schema: {
+      type: 'object',
+      properties: { categoria: { type: 'string' }, limite: { type: 'integer', description: '1 a 20' } },
+    },
+  },
+  {
+    name: 'mercado_tendencias',
+    description:
+      'MERCADO: o que as pessoas estao buscando no Mercado Livre nesta semana (termos que mais cresceram, mais buscados ' +
+      'e populares), no ML inteiro ou numa categoria (id ou texto). Bom para ideia de produto novo e palavras para titulo.',
+    input_schema: { type: 'object', properties: { categoria: { type: 'string' } } },
+  },
+  {
+    name: 'mercado_concorrencia',
+    description:
+      'MERCADO: todos os vendedores de um produto de catalogo do ML, do mais barato ao mais caro, com frete gratis, Full, ' +
+      'tipo (Classico/Premium), quem esta ganhando agora e a diferenca do nosso preco para o menor. Informe anuncio ' +
+      '(nosso MLB...) ou produto (id de catalogo, que vem do mercado_mais_vendidos ou mercado_busca). So funciona para ' +
+      'produtos de catalogo; para os outros use mercado_busca.',
+    input_schema: {
+      type: 'object',
+      properties: { anuncio: { type: 'string' }, produto: { type: 'string' }, limite: { type: 'integer', description: '1 a 40' } },
+    },
+  },
+  {
+    name: 'mercado_busca',
+    description:
+      'MERCADO: procura um produto no Mercado Livre como um cliente faria ("quanto custa X?", "quem vende Y?"). Se a busca ' +
+      'normal estiver bloqueada para este app, procura no catalogo do ML (fonte diz qual foi usada).',
+    input_schema: {
+      type: 'object',
+      properties: { termo: { type: 'string' }, limite: { type: 'integer', description: '1 a 30' } },
+      required: ['termo'],
+    },
+  },
+  {
+    name: 'mercado_radar',
+    description:
+      'MERCADO: radar semanal das categorias da MCS. Compara a foto desta semana com a anterior: nossos produtos na lista ' +
+      'de mais vendidos (subiu/caiu/saiu), quem entrou na lista, quem subiu forte e buscas em alta. resumoEmTexto vem pronto. ' +
+      'A foto e tirada toda segunda de manha; use para "o que mudou no mercado?".',
+    input_schema: { type: 'object', properties: {} },
   },
 ];
 
@@ -444,6 +495,21 @@ export async function executarFerramenta(nome: string, entrada: any): Promise<un
 
     case 'promocoes_vencendo':
       return promocoesVencendo(entrada ?? {});
+
+    case 'mercado_mais_vendidos':
+      return consultaMaisVendidos(entrada ?? {});
+
+    case 'mercado_tendencias':
+      return consultaTendencias(entrada ?? {});
+
+    case 'mercado_concorrencia':
+      return consultaConcorrencia(entrada ?? {});
+
+    case 'mercado_busca':
+      return consultaBusca(entrada ?? {});
+
+    case 'mercado_radar':
+      return consultaRadar();
 
     case 'esquema_do_banco':
       return {

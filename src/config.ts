@@ -32,7 +32,7 @@ const backupKeyEnv = envDeUmDestes(['BACKUP_API_KEY', 'BACKUP_PANEL_API_KEY', 'P
 
 export const config = {
   /** Versao — atualize a cada release. Exibida no cabecalho e em /health, sempre vinda do SERVIDOR. */
-  appVersion: 'analytics v56 (2026-11-19)',
+  appVersion: 'analytics v57 (2026-11-27)',
 
   port: Number(process.env.PORT || 3010),
   serviceApiKey: process.env.SERVICE_API_KEY || '',
@@ -61,6 +61,10 @@ export const config = {
    */
   promocoesEnabled: String(process.env.PROMOCOES_ENABLED || '').toLowerCase() === 'true',
   promocoesScanIntervalHours: Number(process.env.PROMOCOES_SCAN_INTERVAL_HOURS || 6),
+  /** v57: quantas categorias da MCS entram na foto semanal do mercado (as com mais anuncios). */
+  mercadoMaxCategorias: inteiroPositivo(process.env.MERCADO_MAX_CATEGORIAS, 8),
+  /** v57: quantas fotos semanais guardar (26 = ~6 meses). */
+  mercadoFotosRetencao: inteiroPositivo(process.env.MERCADO_FOTOS_RETENCAO, 26),
   /** v46: antecedencia do "termina em breve", em dias. */
   promocoesAvisoDias: inteiroPositivo(process.env.PROMOCOES_AVISO_DIAS, 3),
   /** v46: quanto tempo um anuncio fica em "ficou sem promocao". */
@@ -174,4 +178,6 @@ export const config = {
   tinyTokenStorePath: path.join(dataDir, 'tiny-token.json'),
   custosCachePath: path.join(dataDir, 'custos.json'),
   comprasCachePath: path.join(dataDir, 'compras.json'),
+  /** v57: fotos semanais do mercado (mais vendidos + tendencias das categorias da MCS). */
+  mercadoFotosPath: path.join(dataDir, 'mercado-fotos.json'),
 };

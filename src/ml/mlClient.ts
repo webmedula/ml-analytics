@@ -938,3 +938,12 @@ export async function joinPromotion(itemId: string, corpo: Record<string, unknow
   return mlPost<any>(`/seller-promotions/items/${encodeURIComponent(itemId)}?app_version=v2`, corpo);
 }
 
+
+/**
+ * v57: GET generico para as consultas de MERCADO (mais vendidos, tendencias, concorrencia, busca).
+ * Somente leitura. Erro do ML vem como MlApiError com o status, para quem chama decidir o que fazer
+ * (ex.: a busca publica responde 403 para muitos apps desde 2025 e cai para o catalogo).
+ */
+export async function mlGet<T = any>(path: string): Promise<T> {
+  return mlRequest<T>(path);
+}

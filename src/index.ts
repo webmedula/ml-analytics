@@ -7,6 +7,7 @@ import { startRatingsLoop } from './core/listingRatings';
 import { startPromocoesLoop } from './core/promocoes';
 import { startFichasLoop } from './core/lucro';
 import { startComprasLoop } from './core/compras';
+import { startMercadoLoop } from './core/mercado';
 import { estadoDoBanco } from './db/banco';
 import { startSincronizacaoLoop } from './db/ingestao';
 
@@ -31,6 +32,7 @@ async function main(): Promise<void> {
   startPromocoesLoop();
   startFichasLoop();
   startComprasLoop();
+  startMercadoLoop();
   // Sem banco nao ha o que sincronizar; ligar o loop so encheria o log de erro repetido.
   if (banco.disponivel) startSincronizacaoLoop();
 }
